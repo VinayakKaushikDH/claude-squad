@@ -20,7 +20,8 @@ type InstanceData struct {
 	AutoYes   bool      `json:"auto_yes"`
 
 	Program   string          `json:"program"`
-	Worktree  GitWorktreeData `json:"worktree"`
+	VCSType   string          `json:"vcs_type"`
+	Worktree  json.RawMessage `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
 }
 
@@ -32,6 +33,17 @@ type GitWorktreeData struct {
 	BranchName       string `json:"branch_name"`
 	BaseCommitSHA    string `json:"base_commit_sha"`
 	IsExistingBranch bool   `json:"is_existing_branch"`
+}
+
+// JJWorkspaceData represents the serializable data of a JJWorkspace
+type JJWorkspaceData struct {
+	RepoPath           string `json:"repo_path"`
+	WorkspacePath      string `json:"workspace_path"`
+	SessionName        string `json:"session_name"`
+	WorkspaceName      string `json:"workspace_name"`
+	BookmarkName       string `json:"bookmark_name"`
+	BaseChangeID       string `json:"base_change_id"`
+	IsExistingBookmark bool   `json:"is_existing_bookmark"`
 }
 
 // DiffStatsData represents the serializable data of a DiffStats

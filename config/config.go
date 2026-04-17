@@ -44,6 +44,8 @@ type Config struct {
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
+	// VCSType is the version control system type ("git" or "jj"). Default is "git".
+	VCSType string `json:"vcs_type"`
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -79,6 +81,14 @@ func (c *Config) GetProfiles() []Profile {
 		}
 	}
 	return profiles
+}
+
+// GetVCSType returns the configured VCS type, defaulting to "git" if empty.
+func (c *Config) GetVCSType() string {
+	if c.VCSType == "" {
+		return "git"
+	}
+	return c.VCSType
 }
 
 // DefaultConfig returns the default configuration
