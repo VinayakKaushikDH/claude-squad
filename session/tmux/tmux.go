@@ -38,9 +38,9 @@ type TmuxSession struct {
 
 	// Initialized by Start or Restore
 	//
-	// ptmx is a PTY is running the tmux attach command. This can be resized to change the
-	// stdout dimensions of the tmux pane. On detach, we close it and set a new one.
-	// This should never be nil.
+	// ptmx is a PTY running the tmux attach command. Only non-nil while attached
+	// (between Attach and Detach). When detached, all interaction with the tmux
+	// session goes through tmux CLI commands (send-keys, resize-window, etc.).
 	ptmx *os.File
 	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
 	monitor *statusMonitor
@@ -179,13 +179,14 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 	return false
 }
 
-// Restore attaches to an existing session and restores the window size
+// Restore verifies that an existing tmux session is alive and initializes
+// the status monitor. It does NOT attach a PTY — multiple cs processes can
+// safely call Restore on the same tmux session without interfering with
+// each other. A PTY is only created when Attach() is called for interactive use.
 func (t *TmuxSession) Restore() error {
-	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
-	if err != nil {
-		return fmt.Errorf("error opening PTY: %w", err)
+	if !t.DoesSessionExist() {
+		return fmt.Errorf("tmux session does not exist: %s", t.sanitizedName)
 	}
-	t.ptmx = ptmx
 	t.monitor = newStatusMonitor()
 	return nil
 }
@@ -207,27 +208,28 @@ func (m *statusMonitor) hash(s string) []byte {
 	return h.Sum(nil)
 }
 
-// TapEnter sends an enter keystroke to the tmux pane.
+// TapEnter sends an enter keystroke to the tmux pane via tmux send-keys.
 func (t *TmuxSession) TapEnter() error {
-	_, err := t.ptmx.Write([]byte{0x0D})
-	if err != nil {
-		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "Enter")
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending enter keystroke: %w", err)
 	}
 	return nil
 }
 
 // TapDAndEnter sends 'D' followed by an enter keystroke to the tmux pane.
 func (t *TmuxSession) TapDAndEnter() error {
-	_, err := t.ptmx.Write([]byte{0x44, 0x0D})
-	if err != nil {
-		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "D", "Enter")
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("error sending D+Enter keystrokes: %w", err)
 	}
 	return nil
 }
 
+// SendKeys sends literal text to the tmux pane via tmux send-keys.
 func (t *TmuxSession) SendKeys(keys string) error {
-	_, err := t.ptmx.Write([]byte(keys))
-	return err
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "-l", keys)
+	return t.cmdExec.Run(cmd)
 }
 
 // HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
@@ -256,6 +258,15 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 }
 
 func (t *TmuxSession) Attach() (chan struct{}, error) {
+	// Create the PTY attachment to the tmux session. This is the ONLY place a
+	// PTY is created — Restore() deliberately does not create one so that
+	// multiple cs processes can coexist without disrupting each other's PTYs.
+	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
+	if err != nil {
+		return nil, fmt.Errorf("error attaching to tmux session: %w", err)
+	}
+	t.ptmx = ptmx
+
 	t.attachCh = make(chan struct{})
 
 	t.wg = &sync.WaitGroup{}
@@ -376,8 +387,6 @@ func (t *TmuxSession) DetachSafely() error {
 // Detach disconnects from the current tmux session. It panics if detaching fails. At the moment, there's no
 // way to recover from a failed detach.
 func (t *TmuxSession) Detach() {
-	// TODO: control flow is a bit messy here. If there's an error,
-	// I'm not sure if we get into a bad state. Needs testing.
 	defer func() {
 		close(t.attachCh)
 		t.attachCh = nil
@@ -386,22 +395,17 @@ func (t *TmuxSession) Detach() {
 		t.wg = nil
 	}()
 
-	// Close the attached pty session.
-	err := t.ptmx.Close()
-	if err != nil {
-		// This is a fatal error. We can't detach if we can't close the PTY. It's better to just panic and have the
-		// user re-invoke the program than to ruin their terminal pane.
-		msg := fmt.Sprintf("error closing attach pty session: %v", err)
-		log.ErrorLog.Println(msg)
-		panic(msg)
-	}
-	// Attach goroutines should die on EOF due to the ptmx closing. Call
-	// t.Restore to set a new t.ptmx.
-	if err = t.Restore(); err != nil {
-		// This is a fatal error. Our invariant that a started TmuxSession always has a valid ptmx is violated.
-		msg := fmt.Sprintf("error closing attach pty session: %v", err)
-		log.ErrorLog.Println(msg)
-		panic(msg)
+	// Close the attached PTY. This causes the io.Copy goroutine in Attach to
+	// receive EOF and exit. No new PTY is created — when detached, all tmux
+	// interaction goes through CLI commands (send-keys, resize-window, etc.).
+	if t.ptmx != nil {
+		err := t.ptmx.Close()
+		if err != nil {
+			msg := fmt.Sprintf("error closing attach pty session: %v", err)
+			log.ErrorLog.Println(msg)
+			panic(msg)
+		}
+		t.ptmx = nil
 	}
 
 	// Cancel goroutines created by Attach.
@@ -442,17 +446,29 @@ func (t *TmuxSession) Close() error {
 // SetDetachedSize set the width and height of the session while detached. This makes the
 // tmux output conform to the specified shape.
 func (t *TmuxSession) SetDetachedSize(width, height int) error {
-	return t.updateWindowSize(width, height)
+	return t.resizeViaTmux(width, height)
 }
 
-// updateWindowSize updates the window size of the PTY.
+// resizeViaTmux resizes the tmux window using the tmux CLI. Works whether
+// or not a PTY is attached.
+func (t *TmuxSession) resizeViaTmux(cols, rows int) error {
+	cmd := exec.Command("tmux", "resize-window", "-t", t.sanitizedName,
+		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows))
+	return t.cmdExec.Run(cmd)
+}
+
+// updateWindowSize updates the window size. When a PTY is attached, it resizes
+// the PTY (which tmux detects via SIGWINCH). Otherwise falls back to tmux CLI.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
-	return pty.Setsize(t.ptmx, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(cols),
-		X:    0,
-		Y:    0,
-	})
+	if t.ptmx != nil {
+		return pty.Setsize(t.ptmx, &pty.Winsize{
+			Rows: uint16(rows),
+			Cols: uint16(cols),
+			X:    0,
+			Y:    0,
+		})
+	}
+	return t.resizeViaTmux(cols, rows)
 }
 
 func (t *TmuxSession) DoesSessionExist() bool {

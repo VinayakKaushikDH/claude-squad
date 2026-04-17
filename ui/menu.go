@@ -49,6 +49,8 @@ type Menu struct {
 	instance      *session.Instance
 	activeTab     int
 
+	hasMultipleWorkspaces bool
+
 	// keyDown is the key which is pressed. The default is -1.
 	keyDown keys.KeyName
 }
@@ -91,6 +93,12 @@ func (m *Menu) SetInstance(instance *session.Instance) {
 			m.state = StateEmpty
 		}
 	}
+	m.updateOptions()
+}
+
+// SetHasMultipleWorkspaces updates whether workspace navigation keys are shown
+func (m *Menu) SetHasMultipleWorkspaces(v bool) {
+	m.hasMultipleWorkspaces = v
 	m.updateOptions()
 }
 
@@ -145,6 +153,9 @@ func (m *Menu) addInstanceOptions() {
 
 	// System group
 	systemGroup := []keys.KeyName{keys.KeyTab, keys.KeyHelp, keys.KeyQuit}
+	if m.hasMultipleWorkspaces {
+		systemGroup = append(systemGroup, keys.KeyPrevWorkspace, keys.KeyNextWorkspace)
+	}
 
 	// Combine all groups
 	options = append(options, actionGroup...)

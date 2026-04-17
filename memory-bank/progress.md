@@ -1,6 +1,6 @@
 # Progress
 
-## What Works (as of 2026-04-17, v1.0.17)
+## What Works (as of 2026-04-18, v1.0.17)
 
 - Full TUI session management: create, kill, attach, detach
 - Git worktree isolation per session
@@ -18,6 +18,9 @@
 - **VCS-agnostic workspace interface** (`vcs.Workspace`) with git and jj backends
 - **Config-driven VCS selection** (`vcs_type: "jj"` in config.json)
 - **JJ-native checkout** (`c` key): checks out bookmark in main repo via `jj edit` without pausing the agent session; git retains existing pause/resume flow
+- **Integration tests for jj checkout** (`session/jj/workspace_test.go`): 6 real-jj-repo tests covering dirty workspace snapshot, false dirty-guard regression, bookmark placement, agent-continues post-checkout, and no random names
+- **Multi-workspace tabs** (Phase 4): `[`/`]` keys switch between workspaces derived from launch directory; filtered instance list per tab; green tab highlight for workspaces with Ready agents
+- **OS notifications** (Phase 4): macOS (osascript) and Linux (notify-send) alerts on Running→Ready transition; dedup via `NotifiedReady` flag; configurable via `"notifications"` in config.json
 
 ## Known Issues
 
@@ -31,13 +34,18 @@ Phase 1 (pure abstraction refactor): done.
 Phase 2 (jj implementation): done.
 Phase 3 (jj checkout feature): done.
 
+### Phase 4 — Multi-Workspace Tabs & Notifications — Complete
+
 Remaining polish:
+- [ ] Add `TmuxAlive()` guard in `snapshotActiveInstances` to skip dead tmux sessions (prevents error-flood + false-Ready notifications for orphaned instances)
 - [ ] Consider jj error message normalization for the TUI (noted for future)
 
 ## Recent Milestones
 
 | Version | Change |
 |---------|--------|
+| 1.0.17  | Phase 4: multi-workspace tabs (`[`/`]`), filtered list, OS notifications, green Ready highlight; bug fixes for notification spam + workspace path |
+| 1.0.17  | jj checkout integration tests: 6 real-jj-repo tests in workspace_test.go; 4 unit tests in instance_test.go |
 | 1.0.17  | jj checkout: `c` key checks out bookmark via `jj edit` without pausing agent; git unchanged |
 | 1.0.17  | jj Migration Phase 2: JJWorkspace implementation + full wiring |
 | 1.0.17  | jj Migration Phase 1: vcs.Workspace interface + GitWorktree refactor |

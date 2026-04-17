@@ -70,6 +70,18 @@ config/          ← loads ~/.claude-squad/config.json
 daemon/          ← background daemon for auto-accept mode
 ```
 
+### 7. Testing jj Code
+
+Mock-based unit tests (e.g., `mockWorkspace` in `instance_test.go`) cannot catch jj command behavior bugs — they pass even when the real implementation is broken. Any new jj workspace behavior must be covered by integration tests in `session/jj/workspace_test.go` that spin up a real jj repo (using `setupTestJJRepo` helper). The 6 checkout tests are the reference pattern.
+
+### 8. Workspace Tab Architecture (Phase 4)
+
+Workspaces are a **view-layer concept only** — derived at runtime from `Instance.Path` via `app/workspace.go:DeriveWorkspaces()`. No storage schema changes; the daemon is untouched. The filtered-view pattern in `ui/list.go` (`filterPath` + `filteredIdxs` + `selectionMemo`) is the single source of truth: `GetInstances()` always returns all items (used by `SaveInstances`), while `NumInstances()` returns the filtered count. Global limits (10-instance cap) must use `NumAllInstances()`.
+
+The `ui` package must not import `app` — circular dependency. UI types that mirror app structs (e.g., `WorkspaceTab` vs `app.Workspace`) must be defined independently in the `ui` package.
+
+`NotifiedReady` on `Instance` must only be reset on user-initiated actions (`SendPrompt()`), never on automated metadata poll callbacks (`r.updated` branch). Resetting on tmux output fluctuations causes Running→Ready→Running→Ready cycles that spam notifications.
+
 ## Invariants
 
 - One tmux session per instance.

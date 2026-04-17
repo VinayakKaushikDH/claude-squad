@@ -6,27 +6,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
-	border := lipgloss.RoundedBorder()
-	border.BottomLeft = left
-	border.Bottom = middle
-	border.BottomRight = right
-	return border
-}
-
 var (
-	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
-	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
-	highlightColor    = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
-	inactiveTabStyle  = lipgloss.NewStyle().
-				Border(inactiveTabBorder, true).
-				BorderForeground(highlightColor).
-				AlignHorizontal(lipgloss.Center)
-	activeTabStyle = inactiveTabStyle.
-			Border(activeTabBorder, true).
-			AlignHorizontal(lipgloss.Center)
 	windowStyle = lipgloss.NewStyle().
-			BorderForeground(highlightColor).
+			BorderForeground(HighlightColor).
 			Border(lipgloss.NormalBorder(), false, true, true, true)
 )
 
@@ -86,7 +68,7 @@ func (w *TabbedWindow) SetSize(width, height int) {
 	// 1. Tab height (including border and padding)
 	// 2. Window style vertical frame size
 	// 3. Additional padding/spacing (2 for the newline and spacing)
-	tabHeight := activeTabStyle.GetVerticalFrameSize() + 1
+	tabHeight := ActiveTabStyle.GetVerticalFrameSize() + 1
 	contentHeight := height - tabHeight - windowStyle.GetVerticalFrameSize() - 2
 	contentWidth := w.width - windowStyle.GetHorizontalFrameSize()
 
@@ -131,7 +113,6 @@ func (w *TabbedWindow) ResetPreviewToNormalMode(instance *session.Instance) erro
 	return w.preview.ResetToNormalMode(instance)
 }
 
-// Add these new methods for handling scroll events
 func (w *TabbedWindow) ScrollUp() {
 	switch w.activeTab {
 	case PreviewTab:
@@ -224,7 +205,7 @@ func (w *TabbedWindow) String() string {
 	totalTabWidth := w.width + windowStyle.GetHorizontalFrameSize()
 	tabWidth := totalTabWidth / len(w.tabs)
 	lastTabWidth := totalTabWidth - tabWidth*(len(w.tabs)-1)
-	tabHeight := activeTabStyle.GetVerticalFrameSize() + 1 // get padding border margin size + 1 for character height
+	tabHeight := ActiveTabStyle.GetVerticalFrameSize() + 1 // get padding border margin size + 1 for character height
 
 	for i, t := range w.tabs {
 		width := tabWidth
@@ -235,9 +216,9 @@ func (w *TabbedWindow) String() string {
 		var style lipgloss.Style
 		isFirst, isLast, isActive := i == 0, i == len(w.tabs)-1, i == w.activeTab
 		if isActive {
-			style = activeTabStyle
+			style = ActiveTabStyle
 		} else {
-			style = inactiveTabStyle
+			style = InactiveTabStyle
 		}
 		border, _, _, _, _ := style.GetBorder()
 		if isFirst && isActive {

@@ -4,6 +4,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/notify"
 	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/session/jj"
@@ -14,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -105,16 +107,19 @@ type home struct {
 	textOverlay *overlay.TextOverlay
 	// confirmationOverlay displays confirmation modals
 	confirmationOverlay *overlay.ConfirmationOverlay
+
+	// -- Workspace State --
+
+	workspaces      []Workspace
+	activeWorkspace int
+	workspaceTabBar *ui.WorkspaceTabBar // nil when <=1 workspace
+	currentRepoPath string
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
-	// Load application config
 	appConfig := config.LoadConfig()
-
-	// Load application state
 	appState := config.LoadState()
 
-	// Initialize storage
 	storage, err := session.NewStorage(appState)
 	if err != nil {
 		fmt.Printf("Failed to initialize storage: %v\n", err)
@@ -143,16 +148,69 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		os.Exit(1)
 	}
 
-	// Add loaded instances to the list
 	for _, instance := range instances {
-		// Call the finalizer immediately.
-		h.list.AddInstance(instance)()
+		h.list.AddInstance(instance)() // call finalizer immediately
 		if autoYes {
 			instance.AutoYes = true
 		}
 	}
 
+	h.refreshWorkspaces()
+
+	if cwd, err := os.Getwd(); err == nil {
+		h.currentRepoPath, _ = filepath.Abs(cwd)
+	}
+	if len(h.workspaces) > 0 {
+		h.activeWorkspace = FindWorkspaceIndex(h.workspaces, h.currentRepoPath)
+		h.list.SetFilter(h.workspaces[h.activeWorkspace].Path)
+	}
+
+	if len(h.workspaces) >= 2 {
+		h.workspaceTabBar = ui.NewWorkspaceTabBar()
+		h.workspaceTabBar.SetWorkspaces(h.workspaceTabs())
+		h.workspaceTabBar.SetActiveIdx(h.activeWorkspace)
+		h.menu.SetHasMultipleWorkspaces(true)
+	}
+
 	return h
+}
+
+func (m *home) refreshWorkspaces() {
+	m.workspaces = DeriveWorkspaces(m.list.GetInstances())
+}
+
+func (m *home) workspaceTabs() []ui.WorkspaceTab {
+	tabs := make([]ui.WorkspaceTab, len(m.workspaces))
+	for i, ws := range m.workspaces {
+		tabs[i] = ui.WorkspaceTab{Name: ws.Name, Path: ws.Path, HasReady: ws.HasReady}
+	}
+	return tabs
+}
+
+// syncWorkspaceUI updates the tab bar and menu after workspace changes.
+func (m *home) syncWorkspaceUI() {
+	m.refreshWorkspaces()
+
+	if len(m.workspaces) >= 2 {
+		if m.workspaceTabBar == nil {
+			m.workspaceTabBar = ui.NewWorkspaceTabBar()
+		}
+		if m.activeWorkspace >= len(m.workspaces) {
+			m.activeWorkspace = len(m.workspaces) - 1
+		}
+		m.workspaceTabBar.SetWorkspaces(m.workspaceTabs())
+		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+		m.menu.SetHasMultipleWorkspaces(true)
+	} else {
+		m.workspaceTabBar = nil
+		m.activeWorkspace = 0
+		m.menu.SetHasMultipleWorkspaces(false)
+		if len(m.workspaces) == 1 {
+			m.list.SetFilter(m.workspaces[0].Path)
+		} else {
+			m.list.SetFilter("")
+		}
+	}
 }
 
 // updateHandleWindowSizeEvent sets the sizes of the components.
@@ -166,6 +224,13 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	contentHeight := int(float32(msg.Height) * 0.9)
 	menuHeight := msg.Height - contentHeight - 1     // minus 1 for error box
 	m.errBox.SetSize(int(float32(msg.Width)*0.9), 1) // error box takes 1 row
+
+	// Subtract workspace tab bar height from content area.
+	if m.workspaceTabBar != nil {
+		tabBarHeight := m.workspaceTabBar.Height()
+		contentHeight -= tabBarHeight
+		m.workspaceTabBar.SetWidth(msg.Width)
+	}
 
 	m.tabbedWindow.SetSize(tabsWidth, contentHeight)
 	m.list.SetSize(listWidth, contentHeight)
@@ -240,13 +305,34 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case metadataUpdateDoneMsg:
+		var notifyCmds []tea.Cmd
 		for _, r := range msg.results {
+			prevStatus := r.instance.Status
 			if r.updated {
 				r.instance.SetStatus(session.Running)
 			} else if r.hasPrompt {
 				r.instance.TapEnter()
+				r.instance.NotifiedReady = false
 			} else {
 				r.instance.SetStatus(session.Ready)
+				// Fire notification on Running -> Ready transition.
+				if prevStatus == session.Running && !r.instance.NotifiedReady && m.appConfig.GetNotifications() {
+					r.instance.NotifiedReady = true
+					title := "Claude Squad"
+					for _, ws := range m.workspaces {
+						if ws.Path == r.instance.Path {
+							title += " - " + ws.Name
+							break
+						}
+					}
+					body := r.instance.Title + " is ready"
+					notifyCmds = append(notifyCmds, func() tea.Msg {
+						if err := notify.Send(title, body); err != nil {
+							log.WarningLog.Printf("notification failed: %v", err)
+						}
+						return nil
+					})
+				}
 			}
 			if r.diffStats != nil && r.diffStats.Error != nil {
 				if !strings.Contains(r.diffStats.Error.Error(), "base commit SHA not set") {
@@ -257,7 +343,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				r.instance.SetDiffStats(r.diffStats)
 			}
 		}
-		return m, tickUpdateMetadataCmd(m.snapshotActiveInstances())
+		// Refresh workspace HasReady flags and tab bar.
+		m.syncWorkspaceUI()
+		cmds := append(notifyCmds, tickUpdateMetadataCmd(m.snapshotActiveInstances()))
+		return m, tea.Batch(cmds...)
 	case tea.MouseMsg:
 		// Handle mouse wheel events for scrolling the diff/preview pane
 		if msg.Action == tea.MouseActionPress {
@@ -299,7 +388,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle errors from confirmation actions
 		return m, m.handleError(msg)
 	case instanceChangedMsg:
-		// Handle instance changed after confirmation action
+		// Handle instance changed after confirmation action (e.g. kill).
+		// Re-derive workspaces — a tab may have appeared or disappeared.
+		m.syncWorkspaceUI()
 		return m, m.instanceChanged()
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
@@ -314,6 +405,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
 			return m, m.handleError(err)
 		}
+		// Re-derive workspaces — a new tab may have appeared.
+		m.syncWorkspaceUI()
 		if m.autoYes {
 			msg.instance.AutoYes = true
 		}
@@ -409,7 +502,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			)
 		}
 
-		instance := m.list.GetInstances()[m.list.NumInstances()-1]
+		instance := m.list.GetSelectedInstance()
 		switch msg.Type {
 		// Start the instance (enable previews etc) and go back to the main menu state.
 		case tea.KeyEnter:
@@ -610,7 +703,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	case keys.KeyPrompt:
-		if m.list.NumInstances() >= GlobalInstanceLimit {
+		if m.list.NumAllInstances() >= GlobalInstanceLimit {
 			return m, m.handleError(
 				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 		}
@@ -629,7 +722,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
-			Path:    ".",
+			Path:    m.currentRepoPath,
 			Program: m.program,
 		})
 		if err != nil {
@@ -644,13 +737,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		return m, fetchCmd
 	case keys.KeyNew:
-		if m.list.NumInstances() >= GlobalInstanceLimit {
+		if m.list.NumAllInstances() >= GlobalInstanceLimit {
 			return m, m.handleError(
 				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 		}
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
-			Path:    ".",
+			Path:    m.currentRepoPath,
 			Program: m.program,
 		})
 		if err != nil {
@@ -750,6 +843,28 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			m.showHelpScreen(helpTypeJJCheckout{}, nil)
 		}
 		return m, nil
+	case keys.KeyPrevWorkspace:
+		if len(m.workspaces) < 2 {
+			return m, nil
+		}
+		m.activeWorkspace--
+		if m.activeWorkspace < 0 {
+			m.activeWorkspace = len(m.workspaces) - 1
+		}
+		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
+		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+		return m, m.instanceChanged()
+	case keys.KeyNextWorkspace:
+		if len(m.workspaces) < 2 {
+			return m, nil
+		}
+		m.activeWorkspace++
+		if m.activeWorkspace >= len(m.workspaces) {
+			m.activeWorkspace = 0
+		}
+		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
+		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Status == session.Loading {
@@ -932,6 +1047,12 @@ func (m *home) snapshotActiveInstances() []*session.Instance {
 	return out
 }
 
+// metadataTimeout is the maximum time to wait for all metadata goroutines to
+// complete. If any goroutine hangs (e.g., due to jj/git lock contention when
+// multiple cs processes share the same repo), the loop returns partial results
+// instead of blocking forever.
+const metadataTimeout = 10 * time.Second
+
 // tickUpdateMetadataCmd returns a self-chaining Cmd that sleeps 500ms, then performs
 // expensive metadata I/O (tmux capture, git diff) in parallel background goroutines.
 // Because it only re-schedules after completing, overlapping ticks are impossible.
@@ -946,18 +1067,29 @@ func tickUpdateMetadataCmd(active []*session.Instance) tea.Cmd {
 		}
 
 		results := make([]instanceMetaResult, len(active))
-		var wg sync.WaitGroup
-		for idx, inst := range active {
-			wg.Add(1)
-			go func(i int, instance *session.Instance) {
-				defer wg.Done()
-				r := &results[i]
-				r.instance = instance
-				r.updated, r.hasPrompt = instance.HasUpdated()
-				r.diffStats = instance.ComputeDiff()
-			}(idx, inst)
+		done := make(chan struct{})
+		go func() {
+			var wg sync.WaitGroup
+			for idx, inst := range active {
+				wg.Add(1)
+				go func(i int, instance *session.Instance) {
+					defer wg.Done()
+					r := &results[i]
+					r.instance = instance
+					r.updated, r.hasPrompt = instance.HasUpdated()
+					r.diffStats = instance.ComputeDiff()
+				}(idx, inst)
+			}
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// All goroutines completed normally.
+		case <-time.After(metadataTimeout):
+			log.WarningLog.Printf("metadata update timed out after %v, returning partial results", metadataTimeout)
 		}
-		wg.Wait()
 
 		return metadataUpdateDoneMsg{results: results}
 	}
@@ -1029,12 +1161,11 @@ func (m *home) View() string {
 	previewWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(m.tabbedWindow.String())
 	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listWithPadding, previewWithPadding)
 
-	mainView := lipgloss.JoinVertical(
-		lipgloss.Center,
-		listAndPreview,
-		m.menu.String(),
-		m.errBox.String(),
-	)
+	rows := []string{listAndPreview, m.menu.String(), m.errBox.String()}
+	if m.workspaceTabBar != nil {
+		rows = append([]string{m.workspaceTabBar.View()}, rows...)
+	}
+	mainView := lipgloss.JoinVertical(lipgloss.Center, rows...)
 
 	if m.state == statePrompt {
 		if m.textInputOverlay == nil {

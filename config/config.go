@@ -46,6 +46,16 @@ type Config struct {
 	Profiles []Profile `json:"profiles,omitempty"`
 	// VCSType is the version control system type ("git" or "jj"). Default is "git".
 	VCSType string `json:"vcs_type"`
+	// Notifications enables OS notifications when agents transition to Ready state.
+	Notifications *bool `json:"notifications,omitempty"`
+}
+
+// GetNotifications returns whether OS notifications are enabled (default: true).
+func (c *Config) GetNotifications() bool {
+	if c.Notifications == nil {
+		return true
+	}
+	return *c.Notifications
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and

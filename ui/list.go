@@ -55,10 +55,16 @@ var autoYesStyle = lipgloss.NewStyle().
 
 type List struct {
 	items         []*session.Instance
-	selectedIdx   int
+	selectedIdx   int // Index into filteredIdxs (visible selection)
 	height, width int
 	renderer      *InstanceRenderer
 	autoyes       bool
+
+	// Workspace filtering: when filterPath is non-empty, only instances with
+	// matching Path are visible. filteredIdxs maps visible positions to items indices.
+	filterPath    string
+	filteredIdxs  []int
+	selectionMemo map[string]int // workspace path -> last selectedIdx
 
 	// map of repo name to number of instances using it. Used to display the repo name only if there are
 	// multiple repos in play.
@@ -67,10 +73,11 @@ type List struct {
 
 func NewList(spinner *spinner.Model, autoYes bool) *List {
 	return &List{
-		items:    []*session.Instance{},
-		renderer: &InstanceRenderer{spinner: spinner},
-		repos:    make(map[string]int),
-		autoyes:  autoYes,
+		items:         []*session.Instance{},
+		renderer:      &InstanceRenderer{spinner: spinner},
+		repos:         make(map[string]int),
+		selectionMemo: make(map[string]int),
+		autoyes:       autoYes,
 	}
 }
 
@@ -97,8 +104,56 @@ func (l *List) SetSessionPreviewSize(width, height int) (err error) {
 	return
 }
 
+// NumInstances returns the count of visible (filtered) instances.
 func (l *List) NumInstances() int {
+	return len(l.filteredIdxs)
+}
+
+// NumAllInstances returns the total count of all instances regardless of filter.
+func (l *List) NumAllInstances() int {
 	return len(l.items)
+}
+
+// recomputeFilter rebuilds filteredIdxs based on the current filterPath.
+func (l *List) recomputeFilter() {
+	l.filteredIdxs = l.filteredIdxs[:0]
+	for i, inst := range l.items {
+		if l.filterPath == "" || inst.Path == l.filterPath {
+			l.filteredIdxs = append(l.filteredIdxs, i)
+		}
+	}
+	if l.selectedIdx >= len(l.filteredIdxs) {
+		l.selectedIdx = len(l.filteredIdxs) - 1
+	}
+	if l.selectedIdx < 0 {
+		l.selectedIdx = 0
+	}
+}
+
+// SetFilter sets the workspace filter path. Saves the current selection state
+// for the old filter and restores any saved state for the new filter.
+func (l *List) SetFilter(path string) {
+	// Save current selection for old filter.
+	if l.filterPath != "" {
+		l.selectionMemo[l.filterPath] = l.selectedIdx
+	}
+	l.filterPath = path
+	l.recomputeFilter()
+	// Restore saved selection for new filter.
+	if saved, ok := l.selectionMemo[path]; ok && saved < len(l.filteredIdxs) {
+		l.selectedIdx = saved
+	} else {
+		l.selectedIdx = 0
+	}
+}
+
+// GetVisibleInstances returns only the instances matching the current filter.
+func (l *List) GetVisibleInstances() []*session.Instance {
+	out := make([]*session.Instance, len(l.filteredIdxs))
+	for i, idx := range l.filteredIdxs {
+		out[i] = l.items[idx]
+	}
+	return out
 }
 
 // InstanceRenderer handles rendering of session.Instance objects
@@ -252,41 +307,38 @@ func (l *List) String() string {
 	b.WriteString("\n")
 	b.WriteString("\n")
 
-	// Render the list.
-	for i, item := range l.items {
-		b.WriteString(l.renderer.Render(item, i+1, i == l.selectedIdx, len(l.repos) > 1))
-		if i != len(l.items)-1 {
+	// Render only visible (filtered) instances.
+	for visIdx, actualIdx := range l.filteredIdxs {
+		item := l.items[actualIdx]
+		b.WriteString(l.renderer.Render(item, visIdx+1, visIdx == l.selectedIdx, len(l.repos) > 1))
+		if visIdx != len(l.filteredIdxs)-1 {
 			b.WriteString("\n\n")
 		}
 	}
 	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top, b.String())
 }
 
-// Down selects the next item in the list.
+// Down selects the next visible item in the list.
 func (l *List) Down() {
-	if len(l.items) == 0 {
+	if len(l.filteredIdxs) == 0 {
 		return
 	}
-	if l.selectedIdx < len(l.items)-1 {
+	if l.selectedIdx < len(l.filteredIdxs)-1 {
 		l.selectedIdx++
 	}
 }
 
-// Kill selects the next item in the list.
+// Kill removes the currently selected visible instance.
 func (l *List) Kill() {
-	if len(l.items) == 0 {
+	if len(l.filteredIdxs) == 0 {
 		return
 	}
-	targetInstance := l.items[l.selectedIdx]
+	actualIdx := l.filteredIdxs[l.selectedIdx]
+	targetInstance := l.items[actualIdx]
 
 	// Kill the tmux session
 	if err := targetInstance.Kill(); err != nil {
 		log.ErrorLog.Printf("could not kill instance: %v", err)
-	}
-
-	// If you delete the last one in the list, select the previous one.
-	if l.selectedIdx == len(l.items)-1 {
-		defer l.Up()
 	}
 
 	// Unregister the reponame.
@@ -297,18 +349,23 @@ func (l *List) Kill() {
 		l.rmRepo(repoName)
 	}
 
-	// Since there's items after this, the selectedIdx can stay the same.
-	l.items = append(l.items[:l.selectedIdx], l.items[l.selectedIdx+1:]...)
+	// Remove from master list and recompute filter.
+	// recomputeFilter() handles clamping selectedIdx.
+	l.items = append(l.items[:actualIdx], l.items[actualIdx+1:]...)
+	l.recomputeFilter()
 }
 
 func (l *List) Attach() (chan struct{}, error) {
-	targetInstance := l.items[l.selectedIdx]
-	return targetInstance.Attach()
+	inst := l.GetSelectedInstance()
+	if inst == nil {
+		return nil, fmt.Errorf("no instance selected")
+	}
+	return inst.Attach()
 }
 
-// Up selects the prev item in the list.
+// Up selects the prev visible item in the list.
 func (l *List) Up() {
-	if len(l.items) == 0 {
+	if len(l.filteredIdxs) == 0 {
 		return
 	}
 	if l.selectedIdx > 0 {
@@ -334,11 +391,13 @@ func (l *List) rmRepo(repo string) {
 	}
 }
 
-// AddInstance adds a new instance to the list. It returns a finalizer function that should be called when the instance
+// AddInstance adds a new instance to the list and recomputes the filter.
+// It returns a finalizer function that should be called when the instance
 // is started. If the instance was restored from storage or is paused, you can call the finalizer immediately.
 // When creating a new one and entering the name, you want to call the finalizer once the name is done.
 func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 	l.items = append(l.items, instance)
+	l.recomputeFilter()
 	// The finalizer registers the repo name once the instance is started.
 	return func() {
 		repoName, err := instance.RepoName()
@@ -351,27 +410,31 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 	}
 }
 
-// GetSelectedInstance returns the currently selected instance
+// GetSelectedInstance returns the currently selected visible instance.
 func (l *List) GetSelectedInstance() *session.Instance {
-	if len(l.items) == 0 {
+	if len(l.filteredIdxs) == 0 {
 		return nil
 	}
-	return l.items[l.selectedIdx]
+	if l.selectedIdx >= len(l.filteredIdxs) {
+		return nil
+	}
+	return l.items[l.filteredIdxs[l.selectedIdx]]
 }
 
-// SetSelectedInstance sets the selected index. Noop if the index is out of bounds.
+// SetSelectedInstance sets the selected index within the visible list.
+// Noop if the index is out of bounds.
 func (l *List) SetSelectedInstance(idx int) {
-	if idx >= len(l.items) {
+	if idx >= len(l.filteredIdxs) {
 		return
 	}
 	l.selectedIdx = idx
 }
 
-// SelectInstance finds and selects the given instance in the list.
+// SelectInstance finds and selects the given instance in the visible list.
 func (l *List) SelectInstance(target *session.Instance) {
-	for i, inst := range l.items {
-		if inst == target {
-			l.SetSelectedInstance(i)
+	for visIdx, actualIdx := range l.filteredIdxs {
+		if l.items[actualIdx] == target {
+			l.selectedIdx = visIdx
 			return
 		}
 	}

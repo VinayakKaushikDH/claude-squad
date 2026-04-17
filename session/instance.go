@@ -59,6 +59,9 @@ type Instance struct {
 	// DiffStats stores the current git diff statistics
 	diffStats *vcs.DiffStats
 
+	// NotifiedReady prevents duplicate notifications per Ready transition.
+	NotifiedReady bool
+
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
 	selectedBranch string
 
@@ -647,6 +650,7 @@ func (i *Instance) SendPrompt(prompt string) error {
 	if !i.started {
 		return fmt.Errorf("instance not started")
 	}
+	i.NotifiedReady = false
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}

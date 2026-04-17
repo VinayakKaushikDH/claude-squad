@@ -52,12 +52,17 @@ func TestSanitizeName(t *testing.T) {
 func TestStartTmuxSession(t *testing.T) {
 	ptyFactory := NewMockPtyFactory(t)
 
-	created := false
+	hasSessionCallCount := 0
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
-			if strings.Contains(cmd.String(), "has-session") && !created {
-				created = true
-				return fmt.Errorf("session already exists")
+			if strings.Contains(cmd.String(), "has-session") {
+				hasSessionCallCount++
+				if hasSessionCallCount == 1 {
+					// First call: session doesn't exist yet (Start checks before creating)
+					return fmt.Errorf("session does not exist")
+				}
+				// Subsequent calls: session exists (Restore verifies existence)
+				return nil
 			}
 			return nil
 		},
@@ -71,18 +76,21 @@ func TestStartTmuxSession(t *testing.T) {
 
 	err := session.Start(workdir)
 	require.NoError(t, err)
-	require.Equal(t, 2, len(ptyFactory.cmds))
+
+	// Only 1 PTY should be created — for the new-session command.
+	// Restore() no longer creates a PTY (it just verifies the session exists).
+	require.Equal(t, 1, len(ptyFactory.cmds))
 	require.Equal(t, fmt.Sprintf("tmux new-session -d -s claudesquad_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
-	require.Equal(t, "tmux attach-session -t claudesquad_test-session",
-		cmd2.ToString(ptyFactory.cmds[1]))
 
-	require.Equal(t, 2, len(ptyFactory.files))
+	require.Equal(t, 1, len(ptyFactory.files))
 
-	// File should be closed.
+	// The new-session PTY file should be closed after session creation.
 	_, err = ptyFactory.files[0].Stat()
 	require.Error(t, err)
-	// File should be open
-	_, err = ptyFactory.files[1].Stat()
-	require.NoError(t, err)
+
+	// Monitor should be initialized by Restore.
+	require.NotNil(t, session.monitor)
+	// No PTY should be open — PTY is only created on Attach().
+	require.Nil(t, session.ptmx)
 }

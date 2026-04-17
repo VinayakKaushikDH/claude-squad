@@ -28,6 +28,9 @@ const (
 	// Diff keybindings
 	KeyShiftUp
 	KeyShiftDown
+
+	KeyPrevWorkspace
+	KeyNextWorkspace
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -49,6 +52,8 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"r":          KeyResume,
 	"p":          KeySubmit,
 	"?":          KeyHelp,
+	"[":          KeyPrevWorkspace,
+	"]":          KeyNextWorkspace,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -108,6 +113,15 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "resume"),
+	),
+
+	KeyPrevWorkspace: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[", "prev workspace"),
+	),
+	KeyNextWorkspace: key.NewBinding(
+		key.WithKeys("]"),
+		key.WithHelp("]", "next workspace"),
 	),
 
 	// -- Special keybindings --
