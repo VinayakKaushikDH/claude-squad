@@ -2,7 +2,9 @@
 
 ## Current Focus
 
-Memory bank system is fully set up. `AGENTS.md`, all 6 `memory-bank/*.md` files, and the `/remember` skill (`~/.claude/skills/remember/SKILL.md`) are in place. Ready for feature work.
+**jj migration**: Replacing the `session/git/` layer with jujutsu (`jj`) equivalents.
+Discovery phase complete — full operations inventory and design doc written at `memory-bank/jj-migration.md`.
+Implementation not started.
 
 ## Recent Changes (from git log)
 
@@ -22,9 +24,27 @@ Current version: **1.0.17**
 
 ## Next Steps
 
-- [ ] Identify specific patches or divergences from upstream we want to maintain.
-- [ ] Document any fork-specific behavior in `systemPatterns.md`.
-- [ ] Begin any planned feature work (to be added here as it starts).
+Open questions fully resolved — see `memory-bank/jj-migration.md` for details.
+Architecture decided: `vcs.Workspace` interface + two implementations (`GitWorktree`, `JJWorkspace`).
+Config opt-in via `vcs_type: "jj"`. No session migration needed.
+
+Two-phase implementation:
+
+**Phase 1 — Refactor (no jj code, pure abstraction):**
+1. [ ] Move `DiffStats` to `session/workspace_types.go`
+2. [ ] Define `Workspace` interface in `session/workspace.go`
+3. [ ] Add `CanResume()`/`CanRemove()` to `GitWorktree`, absorb `Prune()` into internals
+4. [ ] Change `instance.go`: `gitWorktree` → `workspace Workspace`
+5. [ ] Add `Instance.CanKill()` + `Instance.PushChanges()`; delete `GetGitWorktree()`
+6. [ ] Update `app.go` kill/push to use new `Instance` methods
+7. [ ] Add `VCSType` to config + storage; `json.RawMessage` dispatch
+8. [ ] Tests pass — pure refactor, no behavior change
+
+**Phase 2 — jj implementation:**
+9. [ ] Implement `session/jj/JJWorkspace`
+10. [ ] Add `DetectVCSType`, `vcs.IsRepo`, `vcs.CleanupWorkspaces`, `vcs.FetchRefs`, `vcs.SearchRefs`
+11. [ ] Wire into `Instance.Start()`, `main.go`, `app.go`
+12. [ ] jj-specific tests
 
 ## Open Questions
 

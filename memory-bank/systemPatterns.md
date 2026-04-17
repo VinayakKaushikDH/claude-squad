@@ -27,21 +27,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { ... }
 func (m Model) View() string { ... }
 ```
 
-### 2. Instance = tmux session + git worktree + metadata
+### 2. Instance = tmux session + workspace + metadata
 
 Each running agent is an `Instance` (defined in `app/instance.go`). It encapsulates:
 - The tmux session name
-- The git worktree path and branch
+- The workspace path and branch/bookmark (git worktree or jj workspace)
 - The program being run (from profile config)
 - Status (running, paused, done)
+
+The workspace is abstracted behind a `Workspace` interface (`session/workspace.go`). Two implementations: `session/git/GitWorktree` and `session/jj/JJWorkspace`. `instance.go` holds a `workspace Workspace` field — not a concrete type. `app.go` never touches the concrete workspace type; it calls `instance.CanKill()` and `instance.PushChanges()` which delegate to the interface.
 
 ### 3. Session Persistence
 
 Sessions are stored to disk via `app/storage.go`. On startup, stored sessions are restored. This allows Claude Squad to survive restarts without losing track of running agents.
 
-### 4. Worktree Isolation
+### 4. Workspace Isolation
 
-Every new session creates a new git worktree on a fresh branch (via `app/git/`). This guarantees no two agents can conflict. The branch is named after the session.
+Every new session creates an isolated workspace on a fresh branch/bookmark. With git: a git worktree via `session/git/`. With jj: a jj workspace via `session/jj/`. Both land under `~/.claude-squad/worktrees/`. The branch/bookmark is named after the session (sanitized). jj workspaces do NOT create git worktrees — they are a jj-only concept (`jj workspace add` produces only a `.jj/` dir, not a `.git` file).
 
 ### 5. Preview Pane (async)
 

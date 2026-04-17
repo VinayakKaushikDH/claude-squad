@@ -19,7 +19,7 @@ This is a **maintained fork** of [smtg-ai/claude-squad](https://github.com/smtg-
 
 - Terminal-first. No Electron, no heavy GUI.
 - Agent-agnostic. Works with any CLI-based coding agent.
-- Git worktree isolation is a hard requirement — each session must be on its own branch.
+- Workspace isolation is a hard requirement — each session must be on its own branch/bookmark, backed by either a git worktree or a jj workspace depending on `vcs_type` config.
 - Configuration via `~/.claude-squad/config.json`.
 
 ## Out of Scope

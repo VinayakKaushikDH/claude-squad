@@ -28,6 +28,7 @@
 - **tmux** — must be installed on the host. Claude Squad creates/manages tmux sessions.
 - **gh** (GitHub CLI) — used for pushing branches and PR creation.
 - The AI agent itself (e.g. `claude`, `codex`, `gemini`, `aider`) must be installed separately.
+- **jj** (Jujutsu) — required only when `vcs_type: "jj"` is configured. Tested against v0.39.0. Note: jj uses file-level repo locking — concurrent mutating commands (`jj describe`, `jj new`) from multiple agent workspaces can conflict; the `JJWorkspace` implementation must use retry-with-backoff on mutating calls.
 
 ## Configuration
 

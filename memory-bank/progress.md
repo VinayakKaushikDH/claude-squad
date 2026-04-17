@@ -21,9 +21,16 @@ None currently tracked. Check upstream issues at `https://github.com/smtg-ai/cla
 
 ## Remaining Work / Planned
 
-- [ ] Identify fork-specific enhancements to implement
-- [ ] Evaluate upstream PRs worth cherry-picking
-- [ ] (Add specific tasks here as they are planned)
+### jj Migration (in progress — discovery done)
+- [ ] `IsJJRepo` startup guard
+- [ ] `JJWorkspace` struct: `Setup`, `Cleanup`, `Remove`, `Prune`
+- [ ] `IsDirty`, `Diff`, `CommitChanges`, `PushChanges`
+- [ ] `SearchBookmarks`, `FetchBookmarks`
+- [ ] Remove `IsBranchCheckedOut` from `Resume()` (jj workspaces don't conflict)
+- [ ] Storage migration: `GitWorktreeData` → `JJWorkspaceData`
+- [ ] Tests
+
+See `memory-bank/jj-migration.md` for full design doc.
 
 ## Recent Milestones
 
