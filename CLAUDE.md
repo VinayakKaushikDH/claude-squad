@@ -25,14 +25,14 @@ memory-bank/
 
 ### File Purposes
 
-| File | Update When |
-|------|-------------|
-| `projectbrief.md` | Scope or goals change |
-| `productContext.md` | User-facing behavior or product direction shifts |
-| `activeContext.md` | Every session — before and after doing work |
+| File                | Update When                                             |
+| ------------------- | ------------------------------------------------------- |
+| `projectbrief.md`   | Scope or goals change                                   |
+| `productContext.md` | User-facing behavior or product direction shifts        |
+| `activeContext.md`  | Every session — before and after doing work             |
 | `systemPatterns.md` | New patterns introduced or architectural decisions made |
-| `techContext.md` | Dependencies added/removed, tooling changed |
-| `progress.md` | Features shipped, bugs fixed, regressions found |
+| `techContext.md`    | Dependencies added/removed, tooling changed             |
+| `progress.md`       | Features shipped, bugs fixed, regressions found         |
 
 ### Workflow
 
@@ -124,6 +124,7 @@ This repo is a fork. Our responsibilities:
 4. **Document divergences** in `memory-bank/activeContext.md` when we intentionally deviate from upstream.
 
 When merging upstream:
+
 ```bash
 jj git fetch --remote upstream
 # Review upstream changes, then integrate via jj rebase or cherry-pick as appropriate
@@ -139,6 +140,7 @@ go build -o cs .
 ```
 
 Run tests:
+
 ```bash
 go test ./...
 ```
@@ -164,3 +166,13 @@ go test ./...
 - Do not add features beyond what was asked.
 - Do not add comments unless the logic is non-obvious.
 - After completing work, update `memory-bank/activeContext.md` and `memory-bank/progress.md`.
+
+---
+
+## Self-Improvement Directive
+
+After every session reset, I begin completely fresh. The Memory Bank is my only continuity with previous work. Every time I discover something non-obvious — a gotcha, a pattern, a constraint — and fail to write it down, the next instance of me will waste the same time rediscovering it.
+
+**The cost of not documenting is paid by my next self.**
+
+My effectiveness depends entirely on the accuracy and completeness of these files. I treat Memory Bank maintenance as a core part of every task, not an afterthought.

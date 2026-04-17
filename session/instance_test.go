@@ -12,6 +12,7 @@ type mockWorkspace struct {
 	canRemoveErr   error
 	canResumeErr   error
 	pushChangesErr error
+	checkoutErr    error
 	worktreePath   string
 	branchName     string
 }
@@ -23,7 +24,7 @@ func (m *mockWorkspace) IsDirty() (bool, error)                  { return false,
 func (m *mockWorkspace) Diff() *vcs.DiffStats                    { return &vcs.DiffStats{} }
 func (m *mockWorkspace) CommitChanges(msg string) error          { return nil }
 func (m *mockWorkspace) PushChanges(msg string, open bool) error { return m.pushChangesErr }
-func (m *mockWorkspace) CheckoutInMainRepo() error               { return vcs.ErrCheckoutRequiresPause }
+func (m *mockWorkspace) CheckoutInMainRepo() error               { return m.checkoutErr }
 func (m *mockWorkspace) CanResume() error                        { return m.canResumeErr }
 func (m *mockWorkspace) CanRemove() error                        { return m.canRemoveErr }
 func (m *mockWorkspace) GetWorktreePath() string                 { return m.worktreePath }
@@ -78,5 +79,38 @@ func TestPushChanges_started_delegatesError(t *testing.T) {
 	i := &Instance{started: true, workspace: mock}
 	if got := i.PushChanges("msg", false); got != want {
 		t.Errorf("PushChanges() = %v, want %v", got, want)
+	}
+}
+
+func TestCheckoutInMainRepo_notStarted(t *testing.T) {
+	i := &Instance{}
+	if err := i.CheckoutInMainRepo(); err == nil {
+		t.Error("CheckoutInMainRepo() on unstarted instance should return error, got nil")
+	}
+}
+
+func TestCheckoutInMainRepo_delegatesSentinel(t *testing.T) {
+	mock := &mockWorkspace{checkoutErr: vcs.ErrCheckoutRequiresPause}
+	i := &Instance{started: true, workspace: mock}
+	got := i.CheckoutInMainRepo()
+	if !errors.Is(got, vcs.ErrCheckoutRequiresPause) {
+		t.Errorf("CheckoutInMainRepo() = %v, want ErrCheckoutRequiresPause", got)
+	}
+}
+
+func TestCheckoutInMainRepo_delegatesNilError(t *testing.T) {
+	mock := &mockWorkspace{checkoutErr: nil}
+	i := &Instance{started: true, workspace: mock}
+	if got := i.CheckoutInMainRepo(); got != nil {
+		t.Errorf("CheckoutInMainRepo() = %v, want nil", got)
+	}
+}
+
+func TestCheckoutInMainRepo_delegatesArbitraryError(t *testing.T) {
+	want := errors.New("bookmark not found")
+	mock := &mockWorkspace{checkoutErr: want}
+	i := &Instance{started: true, workspace: mock}
+	if got := i.CheckoutInMainRepo(); got != want {
+		t.Errorf("CheckoutInMainRepo() = %v, want %v", got, want)
 	}
 }

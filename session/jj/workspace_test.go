@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -333,5 +334,275 @@ func TestDiffNoBaseChangeID(t *testing.T) {
 	stats := ws.Diff()
 	if stats.Error == nil {
 		t.Error("Diff without base change ID should return error")
+	}
+}
+
+// getChangeID returns the change ID for a revision in the given repo path.
+func getChangeID(t *testing.T, repoPath, revision string) string {
+	t.Helper()
+	output, err := runJJCommand(repoPath, "log", "-r", revision, "--no-graph", "-T", "change_id")
+	if err != nil {
+		t.Fatalf("failed to get change ID for %s: %v", revision, err)
+	}
+	return strings.TrimSpace(output)
+}
+
+// TestCheckoutInMainRepo_DirtyWorkspace verifies that checkout works even when
+// the workspace has uncommitted changes and no prior bookmark exists.
+// This catches bug #1 (bookmark not found) and bug #3 (checkout doesn't move main repo).
+func TestCheckoutInMainRepo_DirtyWorkspace(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "checkout-dirty-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Create a file but do NOT commit — workspace is dirty, no bookmark exists yet
+	testFile := filepath.Join(ws.GetWorktreePath(), "dirty-file.txt")
+	if err := os.WriteFile(testFile, []byte("dirty content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// CheckoutInMainRepo should succeed (snapshot + create bookmark + jj edit)
+	if err := ws.CheckoutInMainRepo(); err != nil {
+		t.Fatalf("CheckoutInMainRepo() on dirty workspace = %v, want nil", err)
+	}
+
+	// Bug #1: bookmark must exist after checkout
+	output, err := runJJCommand(repoDir, "bookmark", "list", ws.GetBranchName(), "--ignore-working-copy")
+	if err != nil {
+		t.Fatalf("failed to list bookmarks: %v", err)
+	}
+	if !bookmarkExists(output, ws.GetBranchName()) {
+		t.Errorf("bookmark %q should exist after CheckoutInMainRepo", ws.GetBranchName())
+	}
+
+	// Bug #3: the dirty file should be visible in the main repo after checkout
+	mainRepoFile := filepath.Join(repoDir, "dirty-file.txt")
+	if _, err := os.Stat(mainRepoFile); os.IsNotExist(err) {
+		t.Error("dirty-file.txt should be visible in main repo after CheckoutInMainRepo")
+	}
+}
+
+// TestCheckoutInMainRepo_CleanWorkspaceWithPriorCommit verifies checkout works
+// when there's a prior commit and the workspace is clean.
+func TestCheckoutInMainRepo_CleanWorkspaceWithPriorCommit(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "checkout-clean-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Create and commit a file
+	testFile := filepath.Join(ws.GetWorktreePath(), "committed-file.txt")
+	if err := os.WriteFile(testFile, []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.CommitChanges("test commit"); err != nil {
+		t.Fatalf("CommitChanges failed: %v", err)
+	}
+
+	// Checkout should succeed
+	if err := ws.CheckoutInMainRepo(); err != nil {
+		t.Fatalf("CheckoutInMainRepo() = %v, want nil", err)
+	}
+
+	// The committed file should be visible in main repo
+	mainRepoFile := filepath.Join(repoDir, "committed-file.txt")
+	if _, err := os.Stat(mainRepoFile); os.IsNotExist(err) {
+		t.Error("committed-file.txt should be visible in main repo after CheckoutInMainRepo")
+	}
+}
+
+// TestCheckoutInMainRepo_AgentContinuesAfterCheckout verifies the workspace
+// remains functional after checkout — the agent can keep working.
+func TestCheckoutInMainRepo_AgentContinuesAfterCheckout(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "checkout-continue-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Make a change and checkout
+	testFile := filepath.Join(ws.GetWorktreePath(), "before-checkout.txt")
+	if err := os.WriteFile(testFile, []byte("before\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.CheckoutInMainRepo(); err != nil {
+		t.Fatalf("CheckoutInMainRepo() = %v", err)
+	}
+
+	// Agent should still be able to work: create another file
+	newFile := filepath.Join(ws.GetWorktreePath(), "after-checkout.txt")
+	if err := os.WriteFile(newFile, []byte("after\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirty, err := ws.IsDirty()
+	if err != nil {
+		t.Fatalf("IsDirty() after checkout failed: %v", err)
+	}
+	if !dirty {
+		t.Error("workspace should be dirty after creating a new file post-checkout")
+	}
+
+	// Agent should be able to commit new work
+	if err := ws.CommitChanges("post-checkout commit"); err != nil {
+		t.Errorf("CommitChanges() after checkout failed: %v", err)
+	}
+}
+
+// TestCheckoutInMainRepo_BookmarkPointsToCurrentChange verifies that after
+// CheckoutInMainRepo, the bookmark points to @ (the current WC change),
+// NOT @- (which is what CommitChanges does).
+// This catches bug #4 (agent one commit ahead of user).
+func TestCheckoutInMainRepo_BookmarkPointsToCurrentChange(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "checkout-bookmark-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Make dirty changes
+	testFile := filepath.Join(ws.GetWorktreePath(), "bookmark-test.txt")
+	if err := os.WriteFile(testFile, []byte("bookmark test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ws.CheckoutInMainRepo(); err != nil {
+		t.Fatalf("CheckoutInMainRepo() = %v", err)
+	}
+
+	// Bookmark should point to @ in workspace (not @-)
+	wcChangeID := getChangeID(t, ws.GetWorktreePath(), "@")
+	bookmarkChangeID := getChangeID(t, ws.GetWorktreePath(), ws.GetBranchName())
+
+	if bookmarkChangeID != wcChangeID {
+		t.Errorf("bookmark points to change %s, but workspace @ is %s — bookmark should be on @",
+			bookmarkChangeID, wcChangeID)
+	}
+}
+
+// TestCommitChanges_BookmarkPointsToParent verifies that after CommitChanges,
+// the bookmark points to @- (the described change) and @ is a new empty WC.
+// This contrasts with CheckoutInMainRepo which keeps the bookmark on @.
+func TestCommitChanges_BookmarkPointsToParent(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "commit-bookmark-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Make changes and commit
+	testFile := filepath.Join(ws.GetWorktreePath(), "commit-test.txt")
+	if err := os.WriteFile(testFile, []byte("commit test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ws.CommitChanges("test commit message"); err != nil {
+		t.Fatalf("CommitChanges() = %v", err)
+	}
+
+	// Bookmark should point to @- (the described change, not the new empty WC)
+	parentChangeID := getChangeID(t, ws.GetWorktreePath(), "@-")
+	bookmarkChangeID := getChangeID(t, ws.GetWorktreePath(), ws.GetBranchName())
+
+	if bookmarkChangeID != parentChangeID {
+		t.Errorf("after CommitChanges, bookmark points to %s but @- is %s — bookmark should be on @-",
+			bookmarkChangeID, parentChangeID)
+	}
+
+	// @ should be clean (new empty working copy)
+	dirty, err := ws.IsDirty()
+	if err != nil {
+		t.Fatalf("IsDirty() = %v", err)
+	}
+	if dirty {
+		t.Error("workspace should be clean after CommitChanges (new empty WC)")
+	}
+}
+
+// TestBookmarkNameMatchesSessionName verifies that the bookmark name is exactly
+// the sanitized session name — no prefix, no random suffix.
+// This catches bug #5 (random bookmark names).
+func TestBookmarkNameMatchesSessionName(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	sessionName := "My Test Session"
+	ws, bookmarkName, err := NewJJWorkspace(repoDir, sessionName)
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+
+	expected := sanitizeBookmarkName(sessionName) // "my-test-session"
+	if bookmarkName != expected {
+		t.Errorf("bookmark name = %q, want %q (sanitized session name)", bookmarkName, expected)
+	}
+	if ws.GetBranchName() != expected {
+		t.Errorf("GetBranchName() = %q, want %q", ws.GetBranchName(), expected)
+	}
+
+	// Verify no prefix or suffix was added
+	if strings.Contains(bookmarkName, "/") {
+		t.Errorf("bookmark name %q contains '/' — should not have a prefix", bookmarkName)
+	}
+	if len(bookmarkName) != len(expected) {
+		t.Errorf("bookmark name length %d != expected %d — may have a random suffix",
+			len(bookmarkName), len(expected))
 	}
 }
