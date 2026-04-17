@@ -35,7 +35,9 @@ Each running agent is an `Instance` (defined in `app/instance.go`). It encapsula
 - The program being run (from profile config)
 - Status (running, paused, done)
 
-The workspace is abstracted behind a `Workspace` interface (`session/vcs/workspace.go`). `DiffStats` lives in `session/vcs/types.go`. Two implementations: `session/git/GitWorktree` and `session/jj/JJWorkspace`. `instance.go` holds a `workspace vcs.Workspace` field — not a concrete type. `app.go` never touches the concrete workspace type; it calls `instance.CanKill()` and `instance.PushChanges()` which delegate to the interface. Serialization in `ToInstanceData()` uses a type assertion `i.workspace.(*git.GitWorktree)` to access git-specific getters — this is the only place the concrete type leaks. `Remove()` on `GitWorktree` calls `Prune()` internally; callers must not call `Prune()` separately.
+The workspace is abstracted behind a `Workspace` interface (`session/vcs/workspace.go`). `DiffStats` lives in `session/vcs/types.go`. Two implementations: `session/git/GitWorktree` and `session/jj/JJWorkspace`. `instance.go` holds a `workspace vcs.Workspace` field — not a concrete type. `app.go` never touches the concrete workspace type; it calls `instance.CanKill()`, `instance.PushChanges()`, and `instance.CheckoutInMainRepo()` which delegate to the interface. Serialization in `ToInstanceData()` uses a type assertion `i.workspace.(*git.GitWorktree)` to access git-specific getters — this is the only place the concrete type leaks. `Remove()` on `GitWorktree` calls `Prune()` internally; callers must not call `Prune()` separately.
+
+**VCS-branching via sentinel error**: `CheckoutInMainRepo()` in the git backend returns `vcs.ErrCheckoutRequiresPause`; the jj backend performs the checkout directly. `app.go`'s `KeyCheckout` handler uses `errors.Is(err, vcs.ErrCheckoutRequiresPause)` to dispatch: git takes the existing pause/resume flow, jj shows a non-disruptive confirmation (agent keeps running). New VCS behaviors that diverge between backends should follow this sentinel-error pattern rather than adding VCS type-checks in `app.go`.
 
 ### 3. Session Persistence
 

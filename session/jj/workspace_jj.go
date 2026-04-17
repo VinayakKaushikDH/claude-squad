@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // IsDirty checks if the workspace has uncommitted changes.
@@ -83,6 +84,39 @@ func (j *JJWorkspace) CanResume() error {
 
 // CanRemove always returns nil — jj workspaces are independent, no checkout conflicts.
 func (j *JJWorkspace) CanRemove() error {
+	return nil
+}
+
+// CheckoutInMainRepo checks out the bookmark in the main repository via `jj edit`.
+// If the workspace has uncommitted changes, they are committed first so the
+// bookmark is advanced and the user sees all changes when they checkout.
+func (j *JJWorkspace) CheckoutInMainRepo() error {
+	// Snapshot the workspace's working copy: describe it and move the bookmark
+	// to the current change (@) without creating a new child change. This keeps
+	// both the agent and the user on the exact same jj change.
+	if dirty, err := j.IsDirty(); err != nil {
+		log.ErrorLog.Printf("failed to check workspace dirty state: %v", err)
+	} else if dirty {
+		msg := fmt.Sprintf("[claudesquad] snapshot for checkout on %s", time.Now().Format(time.RFC822))
+		if _, err := runJJCommandWithRetry(j.workspacePath, "describe", "-m", msg); err != nil {
+			return fmt.Errorf("failed to describe workspace changes: %w", err)
+		}
+	}
+
+	// Ensure bookmark points to the current working copy change (@), creating
+	// it if this is the first snapshot.
+	if err := j.ensureBookmark("@"); err != nil {
+		return fmt.Errorf("failed to set bookmark: %w", err)
+	}
+
+	// Checkout: edit the same change the agent is on.
+	// Run directly with cmd.Dir rather than --repository, because jj edit is a
+	// working-copy operation that needs to update files in the main repo directory.
+	cmd := exec.Command("jj", "edit", j.bookmarkName)
+	cmd.Dir = j.repoPath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to checkout bookmark in main repo: %s (%w)", output, err)
+	}
 	return nil
 }
 

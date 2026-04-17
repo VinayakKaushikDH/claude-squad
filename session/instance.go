@@ -482,6 +482,14 @@ func (i *Instance) TmuxAlive() bool {
 	return i.tmuxSession.DoesSessionExist()
 }
 
+// CheckoutInMainRepo delegates to the workspace's CheckoutInMainRepo method.
+func (i *Instance) CheckoutInMainRepo() error {
+	if !i.started {
+		return fmt.Errorf("cannot checkout instance that has not been started")
+	}
+	return i.workspace.CheckoutInMainRepo()
+}
+
 // Pause stops the tmux session and removes the worktree, preserving the branch
 func (i *Instance) Pause() error {
 	if !i.started {

@@ -2,17 +2,13 @@
 
 ## Current Focus
 
-**jj migration**: Replacing the `session/git/` layer with jujutsu (`jj`) equivalents.
-Discovery phase complete — full operations inventory and design doc written at `memory-bank/jj-migration.md`.
-**Phase 1 complete** — pure abstraction refactor done; no behavior change, no jj code yet.
-**Phase 2 complete** — JJWorkspace implementation done; full test suite passes.
+**jj checkout feature**: JJ-native checkout (`c` key) implemented and working. When `c` is pressed on a jj session, the bookmark is checked out in the main repo via `jj edit <bookmark>` without pausing the agent session.
 
 ## Recent Changes (from git log)
 
+- JJ checkout feature: added `CheckoutInMainRepo()` to `vcs.Workspace` interface + `ErrCheckoutRequiresPause` sentinel, git returns sentinel (existing pause flow), jj snapshots + edits in place
 - Phase 2 implementation: `session/jj/` package (6 files), `session/vcs/detect.go`, storage/instance/main/app wiring
 - `a4ab698` — fix: move expensive operations off UI event loop and fix stale preview pane (#253)
-- `c4d0c03` — chore: Bump version to 1.0.17
-- `52aa2dd` — feat: Allow configuring preset profiles for creating sessions (#264)
 
 Current version: **1.0.17**
 
@@ -40,10 +36,17 @@ Current version: **1.0.17**
 11. [x] Wire into `Instance.Start()`, `main.go`, `app.go`
 12. [x] jj-specific tests (13 tests, real jj repos)
 
+### Phase 3 — jj checkout feature:
+13. [x] Added `CheckoutInMainRepo() error` to `vcs.Workspace` interface + `ErrCheckoutRequiresPause` sentinel in `session/vcs/workspace.go`
+14. [x] Git implementation returns `ErrCheckoutRequiresPause` (existing pause/resume flow unchanged)
+15. [x] JJ implementation: snapshot dirty workspace (describe + move bookmark to `@`), then `jj edit <bookmark>` in main repo
+16. [x] `app.go` `KeyCheckout` handler branches on `ErrCheckoutRequiresPause` — git pauses, jj checks out non-disruptively
+17. [x] `helpTypeJJCheckout` added in `app/help.go` — explains agent keeps running, bookmark copied to clipboard
+18. [x] Bookmark names use exact session title (no `BranchPrefix` prefix, no hex timestamp suffix in workspace path)
+
 ## Next Steps
 
-- Architect review pending (code-reviewer agent running)
-- After review approval: commit, update memory bank, consider end-to-end manual test with `vcs_type: "jj"` config
+- Consider jj error message normalization for the TUI (noted for future; currently raw passthrough)
 
 ## Open Questions
 

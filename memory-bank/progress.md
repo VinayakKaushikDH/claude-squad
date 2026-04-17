@@ -17,6 +17,7 @@
 - Works with: Claude Code, Codex, Gemini, Aider
 - **VCS-agnostic workspace interface** (`vcs.Workspace`) with git and jj backends
 - **Config-driven VCS selection** (`vcs_type: "jj"` in config.json)
+- **JJ-native checkout** (`c` key): checks out bookmark in main repo via `jj edit` without pausing the agent session; git retains existing pause/resume flow
 
 ## Known Issues
 
@@ -24,19 +25,20 @@ None currently tracked. Check upstream issues at `https://github.com/smtg-ai/cla
 
 ## Remaining Work / Planned
 
-### jj Migration — Complete (Phase 1 + Phase 2 done)
+### jj Migration — Complete (Phase 1 + Phase 2 + Phase 3 done)
 
 Phase 1 (pure abstraction refactor): done.
 Phase 2 (jj implementation): done.
+Phase 3 (jj checkout feature): done.
 
 Remaining polish:
-- [ ] End-to-end manual test with `vcs_type: "jj"` config
 - [ ] Consider jj error message normalization for the TUI (noted for future)
 
 ## Recent Milestones
 
 | Version | Change |
 |---------|--------|
+| 1.0.17  | jj checkout: `c` key checks out bookmark via `jj edit` without pausing agent; git unchanged |
 | 1.0.17  | jj Migration Phase 2: JJWorkspace implementation + full wiring |
 | 1.0.17  | jj Migration Phase 1: vcs.Workspace interface + GitWorktree refactor |
 | 1.0.17  | Fix stale preview pane; move expensive ops off UI event loop (#253) |

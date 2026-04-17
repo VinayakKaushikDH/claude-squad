@@ -4,9 +4,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/log"
 	"claude-squad/session/vcs"
-	"fmt"
 	"path/filepath"
-	"time"
 )
 
 var _ vcs.Workspace = (*JJWorkspace)(nil)
@@ -31,9 +29,7 @@ type JJWorkspace struct {
 
 // NewJJWorkspace creates a new JJWorkspace for a fresh session (new bookmark from current change).
 func NewJJWorkspace(repoPath string, sessionName string) (workspace *JJWorkspace, bookmarkName string, err error) {
-	cfg := config.LoadConfig()
-	bookmarkName = fmt.Sprintf("%s%s", cfg.BranchPrefix, sessionName)
-	bookmarkName = sanitizeBookmarkName(bookmarkName)
+	bookmarkName = sanitizeBookmarkName(sessionName)
 
 	repoPath, workspacePath, err := resolveWorkspacePaths(repoPath, bookmarkName)
 	if err != nil {
@@ -98,9 +94,9 @@ func resolveWorkspacePaths(repoPath string, bookmarkName string) (resolvedRepo s
 		return "", "", err
 	}
 
-	// bookmarkName is expected to be already sanitized by the caller
+	// bookmarkName is expected to be already sanitized by the caller.
+	// Use the bookmark name directly so jj workspace names match what the user typed.
 	workspacePath = filepath.Join(worktreeDir, bookmarkName)
-	workspacePath = workspacePath + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
 
 	return resolvedRepo, workspacePath, nil
 }

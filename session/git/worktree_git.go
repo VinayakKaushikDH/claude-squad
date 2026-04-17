@@ -2,6 +2,7 @@ package git
 
 import (
 	"claude-squad/log"
+	"claude-squad/session/vcs"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -188,6 +189,12 @@ func (g *GitWorktree) CanRemove() error {
 		return fmt.Errorf("cannot remove: branch is currently checked out")
 	}
 	return nil
+}
+
+// CheckoutInMainRepo returns ErrCheckoutRequiresPause because git worktrees
+// cannot have the same branch checked out in two places simultaneously.
+func (g *GitWorktree) CheckoutInMainRepo() error {
+	return vcs.ErrCheckoutRequiresPause
 }
 
 // OpenBranchURL opens the branch URL in the default browser

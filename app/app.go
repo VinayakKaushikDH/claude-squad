@@ -11,12 +11,14 @@ import (
 	"claude-squad/ui"
 	"claude-squad/ui/overlay"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -730,14 +732,23 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Show help screen before pausing
-		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
-			if err := selected.Pause(); err != nil {
-				m.handleError(err)
-			}
-			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
-			m.instanceChanged()
-		})
+		err := selected.CheckoutInMainRepo()
+		if errors.Is(err, vcs.ErrCheckoutRequiresPause) {
+			// Git: show help screen then pause
+			m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
+				if err := selected.Pause(); err != nil {
+					m.handleError(err)
+				}
+				m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
+				m.instanceChanged()
+			})
+		} else if err != nil {
+			return m, m.handleError(err)
+		} else {
+			// JJ: already checked out, show confirmation + copy to clipboard
+			_ = clipboard.WriteAll(selected.Branch)
+			m.showHelpScreen(helpTypeJJCheckout{}, nil)
+		}
 		return m, nil
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()

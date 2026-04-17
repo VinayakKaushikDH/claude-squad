@@ -29,6 +29,13 @@
 - **gh** (GitHub CLI) — used for pushing branches and PR creation.
 - The AI agent itself (e.g. `claude`, `codex`, `gemini`, `aider`) must be installed separately.
 - **jj** (Jujutsu) — required only when `vcs_type: "jj"` is configured. Tested against v0.39.0. Note: jj uses file-level repo locking — concurrent mutating commands (`jj describe`, `jj new`) from multiple agent workspaces can conflict; the `JJWorkspace` implementation must use retry-with-backoff on mutating calls.
+  - `jj bookmark list <name>` exits 0 even when the bookmark does not exist (prints a Warning line instead). Use `bookmarkExists()` in `session/jj/util.go` which checks for `bookmarkName + ":"` while skipping Warning/Hint lines.
+  - `jj split` is interactive — it opens an editor and hangs. Use `EDITOR=true jj split ...` to suppress the editor when calling from code or scripts.
+  - jj resolves paths through symlinks; on macOS `os.MkdirTemp` returns `/var/...` but jj returns `/private/var/...`. Use `filepath.EvalSymlinks` when comparing paths in tests.
+  - `jj edit <bookmark>` is a working-copy operation and must be run with `cmd.Dir` set to the repo root — passing `--repository` flag does not update the working copy.
+  - After `jj edit`, `jj status` always shows "Working copy changes:" (normal behavior — the working copy IS the checked-out change). Do not use a dirty-state guard before `jj edit`; it will always fire and block checkout.
+  - When snapshotting an agent workspace before checkout, use describe + move bookmark to `@` (do NOT call `jj new`). Calling `jj new` advances the agent one empty commit ahead, leaving the bookmark behind.
+  - Do not prepend `BranchPrefix` (e.g. `username/`) to jj bookmark names and do not append hex timestamp suffixes to workspace directory names — both cause bookmark-not-found errors and confuse users. Use the sanitized session title directly.
 
 ## Configuration
 

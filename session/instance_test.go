@@ -23,6 +23,7 @@ func (m *mockWorkspace) IsDirty() (bool, error)                  { return false,
 func (m *mockWorkspace) Diff() *vcs.DiffStats                    { return &vcs.DiffStats{} }
 func (m *mockWorkspace) CommitChanges(msg string) error          { return nil }
 func (m *mockWorkspace) PushChanges(msg string, open bool) error { return m.pushChangesErr }
+func (m *mockWorkspace) CheckoutInMainRepo() error               { return vcs.ErrCheckoutRequiresPause }
 func (m *mockWorkspace) CanResume() error                        { return m.canResumeErr }
 func (m *mockWorkspace) CanRemove() error                        { return m.canRemoveErr }
 func (m *mockWorkspace) GetWorktreePath() string                 { return m.worktreePath }

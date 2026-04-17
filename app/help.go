@@ -29,6 +29,8 @@ type helpTypeInstanceAttach struct{}
 
 type helpTypeInstanceCheckout struct{}
 
+type helpTypeJJCheckout struct{}
+
 func helpStart(instance *session.Instance) helpText {
 	return helpTypeInstanceStart{instance: instance}
 }
@@ -105,6 +107,19 @@ func (h helpTypeInstanceCheckout) toContent() string {
 	)
 	return content
 }
+func (h helpTypeJJCheckout) toContent() string {
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Render("Bookmark Checked Out"),
+		"",
+		"The bookmark has been checked out in your main repository via "+keyStyle.Render("jj edit")+".",
+		"You are now editing the same change as the agent.",
+		"",
+		"The agent session is still running and will continue working.",
+		"The bookmark name has been copied to your clipboard.",
+	)
+	return content
+}
+
 func (h helpTypeGeneral) mask() uint32 {
 	return 1
 }
@@ -117,6 +132,9 @@ func (h helpTypeInstanceAttach) mask() uint32 {
 }
 func (h helpTypeInstanceCheckout) mask() uint32 {
 	return 1 << 3
+}
+func (h helpTypeJJCheckout) mask() uint32 {
+	return 1 << 4
 }
 
 var (
