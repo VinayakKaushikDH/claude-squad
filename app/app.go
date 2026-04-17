@@ -6,6 +6,8 @@ import (
 	"claude-squad/log"
 	"claude-squad/session"
 	"claude-squad/session/git"
+	"claude-squad/session/jj"
+	"claude-squad/session/vcs"
 	"claude-squad/ui"
 	"claude-squad/ui/overlay"
 	"context"
@@ -611,10 +613,15 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 		}
 
-		// Start a background fetch so branches are up to date by the time the picker opens
+		// Start a background fetch so branches/bookmarks are up to date by the time the picker opens
 		fetchCmd := func() tea.Msg {
 			currentDir, _ := os.Getwd()
-			git.FetchBranches(currentDir)
+			cfg := config.LoadConfig()
+			if cfg.GetVCSType() == "jj" {
+				jj.FetchBookmarks(currentDir)
+			} else {
+				git.FetchBranches(currentDir)
+			}
 			return nil
 		}
 
@@ -678,19 +685,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// Create the kill action as a tea.Cmd
 		killAction := func() tea.Msg {
-			// Get worktree and check if branch is checked out
-			worktree, err := selected.GetGitWorktree()
-			if err != nil {
+			if err := selected.CanKill(); err != nil {
 				return err
-			}
-
-			checkedOut, err := worktree.IsBranchCheckedOut()
-			if err != nil {
-				return err
-			}
-
-			if checkedOut {
-				return fmt.Errorf("instance %s is currently checked out", selected.Title)
 			}
 
 			// Clean up terminal session for this instance
@@ -719,11 +715,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		pushAction := func() tea.Msg {
 			// Default commit message with timestamp
 			commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
-			worktree, err := selected.GetGitWorktree()
-			if err != nil {
-				return err
-			}
-			if err = worktree.PushChanges(commitMsg, true); err != nil {
+			if err := selected.PushChanges(commitMsg, true); err != nil {
 				return err
 			}
 			return nil
@@ -867,11 +859,18 @@ func (m *home) scheduleBranchSearch(filter string, version uint64) tea.Cmd {
 	}
 }
 
-// runBranchSearch returns a tea.Cmd that performs the git search in the background.
+// runBranchSearch returns a tea.Cmd that performs the branch/bookmark search in the background.
 func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	return func() tea.Msg {
 		currentDir, _ := os.Getwd()
-		branches, err := git.SearchBranches(currentDir, filter)
+		cfg := config.LoadConfig()
+		var branches []string
+		var err error
+		if cfg.GetVCSType() == "jj" {
+			branches, err = jj.SearchBookmarks(currentDir, filter)
+		} else {
+			branches, err = git.SearchBranches(currentDir, filter)
+		}
 		if err != nil {
 			log.WarningLog.Printf("branch search failed: %v", err)
 			return nil
@@ -886,7 +885,7 @@ type instanceMetaResult struct {
 	instance  *session.Instance
 	updated   bool
 	hasPrompt bool
-	diffStats *git.DiffStats
+	diffStats *vcs.DiffStats
 }
 
 // metadataUpdateDoneMsg is sent when the background metadata update completes.

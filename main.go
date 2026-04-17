@@ -8,6 +8,8 @@ import (
 	"claude-squad/log"
 	"claude-squad/session"
 	"claude-squad/session/git"
+	"claude-squad/session/jj"
+	"claude-squad/session/vcs"
 	"claude-squad/session/tmux"
 	"context"
 	"encoding/json"
@@ -43,8 +45,8 @@ var (
 				return fmt.Errorf("failed to get current directory: %w", err)
 			}
 
-			if !git.IsGitRepo(currentDir) {
-				return fmt.Errorf("error: claude-squad must be run from within a git repository")
+			if !vcs.IsRepo(currentDir) {
+				return fmt.Errorf("error: claude-squad must be run from within a git or jj repository")
 			}
 
 			cfg := config.LoadConfig()
@@ -97,10 +99,19 @@ var (
 			}
 			fmt.Println("Tmux sessions have been cleaned up")
 
-			if err := git.CleanupWorktrees(); err != nil {
-				return fmt.Errorf("failed to cleanup worktrees: %w", err)
+			cfg := config.LoadConfig()
+			switch cfg.GetVCSType() {
+			case "jj":
+				if err := jj.CleanupWorkspaces(); err != nil {
+					return fmt.Errorf("failed to cleanup jj workspaces: %w", err)
+				}
+				fmt.Println("jj workspaces have been cleaned up")
+			default:
+				if err := git.CleanupWorktrees(); err != nil {
+					return fmt.Errorf("failed to cleanup worktrees: %w", err)
+				}
+				fmt.Println("Worktrees have been cleaned up")
 			}
-			fmt.Println("Worktrees have been cleaned up")
 
 			// Kill any daemon that's running.
 			if err := daemon.StopDaemon(); err != nil {
