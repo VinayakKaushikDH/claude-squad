@@ -139,7 +139,9 @@ func (g *GitWorktree) Remove() error {
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil {
 		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
-
+	if err := g.Prune(); err != nil {
+		return fmt.Errorf("failed to prune after remove: %w", err)
+	}
 	return nil
 }
 

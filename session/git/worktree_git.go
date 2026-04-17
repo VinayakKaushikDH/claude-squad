@@ -166,6 +166,30 @@ func (g *GitWorktree) IsBranchCheckedOut() (bool, error) {
 	return strings.TrimSpace(string(output)) == g.branchName, nil
 }
 
+// CanResume checks whether this workspace can be resumed.
+func (g *GitWorktree) CanResume() error {
+	checked, err := g.IsBranchCheckedOut()
+	if err != nil {
+		return fmt.Errorf("failed to check if branch is checked out: %w", err)
+	}
+	if checked {
+		return fmt.Errorf("cannot resume: branch is checked out, please switch to a different branch")
+	}
+	return nil
+}
+
+// CanRemove checks whether this workspace can be removed/killed.
+func (g *GitWorktree) CanRemove() error {
+	checked, err := g.IsBranchCheckedOut()
+	if err != nil {
+		return fmt.Errorf("failed to check if branch is checked out: %w", err)
+	}
+	if checked {
+		return fmt.Errorf("cannot remove: branch is currently checked out")
+	}
+	return nil
+}
+
 // OpenBranchURL opens the branch URL in the default browser
 func (g *GitWorktree) OpenBranchURL() error {
 	// Check if GitHub CLI is available

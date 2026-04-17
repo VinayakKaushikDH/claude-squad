@@ -3,10 +3,13 @@ package git
 import (
 	"claude-squad/config"
 	"claude-squad/log"
+	"claude-squad/session/vcs"
 	"fmt"
 	"path/filepath"
 	"time"
 )
+
+var _ vcs.Workspace = (*GitWorktree)(nil)
 
 func getWorktreeDirectory() (string, error) {
 	configDir, err := config.GetConfigDir()
