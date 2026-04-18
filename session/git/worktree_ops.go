@@ -39,8 +39,13 @@ func (g *GitWorktree) Setup() error {
 func (g *GitWorktree) setupFromExistingBranch() error {
 	// Directory already created in Setup(), skip duplicate creation
 
-	// Clean up any existing worktree first
-	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath) // Ignore error if worktree doesn't exist
+	// Clean up any existing worktree first. git worktree remove -f only works
+	// for registered worktrees; if the directory exists but is unregistered
+	// (e.g. leftover from a crashed session), the remove silently fails and
+	// git worktree add will error "destination path exists". Remove the
+	// directory directly as a fallback.
+	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath)
+	_ = os.RemoveAll(g.worktreePath)
 
 	// Check if the local branch exists
 	_, localErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
@@ -67,8 +72,9 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 
 // setupNewWorktree creates a new worktree from HEAD
 func (g *GitWorktree) setupNewWorktree() error {
-	// Clean up any existing worktree first
-	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath) // Ignore error if worktree doesn't exist
+	// Clean up any existing worktree first (see comment in setupFromExistingBranch).
+	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath)
+	_ = os.RemoveAll(g.worktreePath)
 
 	// Clean up any existing branch using git CLI (much faster than go-git PlainOpen)
 	_, _ = g.runGitCommand(g.repoPath, "branch", "-D", g.branchName) // Ignore error if branch doesn't exist

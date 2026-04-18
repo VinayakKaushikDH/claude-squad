@@ -32,13 +32,42 @@ func (j *JJWorkspace) Setup() error {
 	return j.setupNewWorkspace()
 }
 
+// resolveBaseRevision returns the change ID to use as the base for a new
+// workspace. It tries @ first (the current working-copy change), then falls
+// back to trunk() and latest(all()) for repos where the default workspace has
+// no working-copy commit (e.g. init'd with --no-working-copy, or "default"
+// workspace was accidentally forgotten).
+func (j *JJWorkspace) resolveBaseRevision() (string, error) {
+	for _, rev := range []string{"@", "trunk()", "latest(all())"} {
+		out, err := runJJCommand(j.repoPath, "log", "-r", rev, "--no-graph", "-T", "change_id", "--ignore-working-copy")
+		if err == nil {
+			if r := strings.TrimSpace(out); r != "" {
+				return r, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("failed to resolve base revision: no working-copy commit and no fallback found")
+}
+
 // setupNewWorkspace creates a workspace from the current change (@).
 func (j *JJWorkspace) setupNewWorkspace() error {
-	// Clean up any stale workspace with the same name
-	_, _ = runJJCommandWithRetry(j.repoPath, "workspace", "forget", j.workspaceName, "--ignore-working-copy")
+	// Never forget the "default" workspace — it is the main repo's primary
+	// workspace. Calling `jj workspace forget default` would destroy the
+	// working-copy tracking for the entire repo, making @ unresolvable.
+	if j.workspaceName != "default" {
+		_, _ = runJJCommandWithRetry(j.repoPath, "workspace", "forget", j.workspaceName, "--ignore-working-copy")
+	}
+	// Remove the directory: jj workspace add fails if the path already exists.
+	_ = os.RemoveAll(j.workspacePath)
 
-	// Create workspace from current change
-	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "add", "--revision", "@", j.workspacePath); err != nil {
+	// Resolve the base revision without triggering a working-copy snapshot.
+	rev, err := j.resolveBaseRevision()
+	if err != nil {
+		return err
+	}
+
+	// Create workspace from the resolved change ID
+	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "add", "--revision", rev, j.workspacePath); err != nil {
 		return fmt.Errorf("failed to create jj workspace: %w", err)
 	}
 
@@ -54,8 +83,12 @@ func (j *JJWorkspace) setupNewWorkspace() error {
 
 // setupFromExistingBookmark creates a workspace from an existing bookmark.
 func (j *JJWorkspace) setupFromExistingBookmark() error {
-	// Clean up any stale workspace with the same name
-	_, _ = runJJCommand(j.repoPath, "workspace", "forget", j.workspaceName, "--ignore-working-copy")
+	// Never forget the "default" workspace (see setupNewWorkspace).
+	if j.workspaceName != "default" {
+		_, _ = runJJCommand(j.repoPath, "workspace", "forget", j.workspaceName, "--ignore-working-copy")
+	}
+	// Remove the directory: jj workspace add fails if the path already exists.
+	_ = os.RemoveAll(j.workspacePath)
 
 	// Create workspace from the bookmark's revision
 	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "add", "--revision", j.bookmarkName, j.workspacePath); err != nil {
