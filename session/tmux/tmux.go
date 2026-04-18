@@ -458,9 +458,12 @@ func (t *TmuxSession) resizeViaTmux(cols, rows int) error {
 }
 
 // updateWindowSize updates the window size. When a PTY is attached, it resizes
-// the PTY (which tmux detects via SIGWINCH). Otherwise falls back to tmux CLI.
+// both the tmux window (to undo any forced size from SetDetachedSize) and the
+// PTY. Otherwise falls back to tmux CLI only.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	if t.ptmx != nil {
+		// Resize the tmux window first to undo any forced size from SetDetachedSize.
+		_ = t.resizeViaTmux(cols, rows)
 		return pty.Setsize(t.ptmx, &pty.Winsize{
 			Rows: uint16(rows),
 			Cols: uint16(cols),

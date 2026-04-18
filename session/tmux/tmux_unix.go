@@ -13,6 +13,11 @@ import (
 )
 
 // monitorWindowSize monitors and handles window resize events while attached.
+// In addition to SIGWINCH, it polls every 2 seconds to reassert the correct
+// window size. This handles the case where another cs process calls
+// resize-window (for its preview pane) on the same tmux session — SIGWINCH
+// is not delivered for tmux-initiated resizes, so polling is the only way
+// to recover.
 func (t *TmuxSession) monitorWindowSize() {
 	winchChan := make(chan os.Signal, 1)
 	signal.Notify(winchChan, syscall.SIGWINCH)
@@ -40,7 +45,7 @@ func (t *TmuxSession) monitorWindowSize() {
 	defer doUpdate()
 
 	// Debounce resize events
-	t.wg.Add(2)
+	t.wg.Add(3)
 	debouncedWinch := make(chan os.Signal, 1)
 	go func() {
 		defer t.wg.Done()
@@ -71,6 +76,23 @@ func (t *TmuxSession) monitorWindowSize() {
 			case <-t.ctx.Done():
 				return
 			case <-debouncedWinch:
+				doUpdate()
+			}
+		}
+	}()
+	// Periodic poll to reassert window size. Another cs process may call
+	// resize-window for its preview pane, shrinking this attached session.
+	// SIGWINCH is not delivered for tmux-initiated resizes, so we poll to
+	// undo those changes.
+	go func() {
+		defer t.wg.Done()
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-t.ctx.Done():
+				return
+			case <-ticker.C:
 				doUpdate()
 			}
 		}
