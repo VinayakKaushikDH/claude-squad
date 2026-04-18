@@ -359,6 +359,12 @@ func (m *home) mergeReloadedInstances(diskData []session.InstanceData) {
 				Content: diskInst.DiffStats.Content,
 			})
 		}
+		// Propagate acknowledgment from other processes. ReadyAcknowledged
+		// is a one-way latch (reset only on the next Running→Ready
+		// transition), so adopting true from disk is always safe.
+		if diskInst.ReadyAcknowledged && !inst.ReadyAcknowledged {
+			inst.ReadyAcknowledged = true
+		}
 	}
 
 	m.syncWorkspaceUI()
@@ -525,6 +531,19 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mergeReloadedInstances(msg.instances)
+		// After merge, the active workspace may have lost all its instances
+		// (e.g. another process killed them). Auto-switch to our own workspace.
+		m.syncWorkspaceUI()
+		if m.list.NumInstances() == 0 && m.currentRepoPath != "" && len(m.workspaces) > 0 {
+			ownIdx := FindWorkspaceIndex(m.workspaces, m.currentRepoPath)
+			if ownIdx != m.activeWorkspace {
+				m.activeWorkspace = ownIdx
+				m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
+				if m.workspaceTabBar != nil {
+					m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+				}
+			}
+		}
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case tea.MouseMsg:
 		// Handle mouse wheel events for scrolling the diff/preview pane

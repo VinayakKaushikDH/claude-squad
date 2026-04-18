@@ -97,6 +97,14 @@ Tab badge and individual agent blink/dot are controlled by **two separate mechan
 
 The disk reload counter threshold is 2 ticks (~1 second) not 10 (~5 seconds) — changed to make cross-process acknowledgment feel near-instant.
 
+The auto-acknowledge in `metadataUpdateDoneMsg` must only fire on the Running→Ready transition (`prevStatus == session.Running`), NOT on every tick when `isViewingWorkspace` is true. Firing on every tick was a bug that caused workspace switch to clear all agent notifications.
+
+When `ReadyAcknowledged` is true, the Render function must emit `"  "` (2 spaces), not `""`, to preserve the icon slot width — an empty string causes the selected-item background highlight to be shorter than other rows.
+
+After `mergeReloadedInstances`, if the active workspace has no remaining instances (e.g. another process killed them all), auto-switch to `currentRepoPath` to avoid an empty/stuck view.
+
+`SetDetachedSize` must cache its own `lastCols`/`lastRows` and skip the tmux call when dimensions are unchanged — do NOT invalidate the cache from `SetDetachedSize`. The original approach called `t.lastCols = 0` to force a resize, causing two processes to fight and produce ~2-second window flicker.
+
 ## Invariants
 
 - One tmux session per instance.
