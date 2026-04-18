@@ -7,6 +7,8 @@ import (
 	"claude-squad/session/jj"
 	"claude-squad/session/tmux"
 	"claude-squad/session/vcs"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 
@@ -17,6 +19,16 @@ import (
 
 	"github.com/atotto/clipboard"
 )
+
+// generateID returns a random hex string suitable as a unique instance identifier.
+func generateID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp-based ID if crypto/rand fails
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
 
 type Status int
 
@@ -33,6 +45,8 @@ const (
 
 // Instance is a running instance of claude code.
 type Instance struct {
+	// ID is a unique identifier for the instance (UUID).
+	ID string
 	// Title is the title of the instance.
 	Title string
 	// Path is the path to the workspace.
@@ -77,6 +91,7 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
+		ID:        i.ID,
 		Title:     i.Title,
 		Path:      i.Path,
 		Branch:    i.Branch,
@@ -137,6 +152,7 @@ func (i *Instance) ToInstanceData() InstanceData {
 // FromInstanceData creates a new Instance from serialized data
 func FromInstanceData(data InstanceData) (*Instance, error) {
 	instance := &Instance{
+		ID:        data.ID,
 		Title:     data.Title,
 		Path:      data.Path,
 		Branch:    data.Branch,
@@ -217,6 +233,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 	}
 
 	return &Instance{
+		ID:             generateID(),
 		Title:          opts.Title,
 		Status:         Ready,
 		Path:           absPath,

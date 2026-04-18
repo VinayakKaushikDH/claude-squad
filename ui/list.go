@@ -410,6 +410,38 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 	}
 }
 
+// RemoveInstanceByTitle removes an instance by title without calling Kill().
+// Used for cross-process merge when an instance was deleted by another process.
+func (l *List) RemoveInstanceByTitle(title string) {
+	for i, inst := range l.items {
+		if inst.Title == title {
+			// Unregister the repo name if the instance was started.
+			if inst.Started() {
+				repoName, err := inst.RepoName()
+				if err == nil {
+					l.rmRepo(repoName)
+				}
+			}
+			l.items = append(l.items[:i], l.items[i+1:]...)
+			l.recomputeFilter()
+			return
+		}
+	}
+}
+
+// GetInstanceByID returns the instance with the given ID, or nil if not found.
+func (l *List) GetInstanceByID(id string) *session.Instance {
+	if id == "" {
+		return nil
+	}
+	for _, inst := range l.items {
+		if inst.ID == id {
+			return inst
+		}
+	}
+	return nil
+}
+
 // GetSelectedInstance returns the currently selected visible instance.
 func (l *List) GetSelectedInstance() *session.Instance {
 	if len(l.filteredIdxs) == 0 {
