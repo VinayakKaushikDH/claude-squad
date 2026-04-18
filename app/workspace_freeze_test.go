@@ -43,7 +43,7 @@ func TestSyncWorkspaceUI_SingleWorkspace_NoTabBar(t *testing.T) {
 
 	h.syncWorkspaceUI()
 
-	assert.Nil(t, h.workspaceTabBar, "tab bar should be nil for single workspace")
+	assert.NotNil(t, h.workspaceTabBar, "tab bar should be visible even for single workspace")
 	assert.Equal(t, 0, h.activeWorkspace)
 	assert.Len(t, h.workspaces, 1)
 }
@@ -83,7 +83,7 @@ func TestSyncWorkspaceUI_WorkspaceDisappears(t *testing.T) {
 	// syncWorkspaceUI should handle the workspace disappearing.
 	h.syncWorkspaceUI()
 
-	assert.Nil(t, h.workspaceTabBar, "tab bar should be nil after dropping to 1 workspace")
+	assert.NotNil(t, h.workspaceTabBar, "tab bar should remain visible even with 1 workspace")
 	assert.Equal(t, 0, h.activeWorkspace, "activeWorkspace should clamp to 0")
 	assert.Len(t, h.workspaces, 1)
 }
@@ -150,8 +150,9 @@ func TestInitFromDifferentDir_InstancesInOtherWorkspace(t *testing.T) {
 	assert.Equal(t, 2, h.list.NumInstances())
 	assert.NotNil(t, h.list.GetSelectedInstance())
 
-	// No tab bar since only 1 workspace.
-	assert.Nil(t, h.workspaceTabBar)
+	// Tab bar should be visible even with 1 workspace (new behavior).
+	h.syncWorkspaceUI()
+	assert.NotNil(t, h.workspaceTabBar)
 }
 
 func TestInitFromDifferentDir_NoExistingInstances(t *testing.T) {
@@ -432,4 +433,108 @@ func TestSyncWorkspaceUI_HasReadyClears(t *testing.T) {
 		}
 	}
 	assert.False(t, wsA.HasReady, "HasReady should clear when no instances are Ready")
+}
+
+// --- ReadyAcknowledged tests ---
+
+func TestSyncWorkspaceUI_HasReadyGatedOnAcknowledged(t *testing.T) {
+	inst := makeInstance("/path/a", session.Ready)
+	h := newTestHome([]*session.Instance{inst})
+
+	// Before acknowledgment: HasReady should be true.
+	h.syncWorkspaceUI()
+	require.Len(t, h.workspaces, 1)
+	assert.True(t, h.workspaces[0].HasReady, "unacknowledged Ready instance should set HasReady")
+
+	// After acknowledgment: HasReady should be false.
+	inst.ReadyAcknowledged = true
+	h.syncWorkspaceUI()
+	assert.False(t, h.workspaces[0].HasReady, "acknowledged Ready instance should NOT set HasReady")
+
+	// Reset acknowledgment: HasReady should return to true.
+	inst.ReadyAcknowledged = false
+	h.syncWorkspaceUI()
+	assert.True(t, h.workspaces[0].HasReady, "un-acknowledged Ready instance should set HasReady again")
+}
+
+func TestMetadataUpdate_NotificationSuppressedWhenViewingWorkspace(t *testing.T) {
+	instA := &session.Instance{
+		Title:  "agent-a",
+		Path:   "/path/a",
+		Status: session.Running,
+	}
+	instB := &session.Instance{
+		Title:  "agent-b",
+		Path:   "/path/b",
+		Status: session.Running,
+	}
+
+	th := newTestHarness(t, []*session.Instance{instA, instB})
+	th.h.currentRepoPath = "/path/a"
+	th.h.syncWorkspaceUI()
+
+	// Set active workspace to /path/a.
+	th.h.activeWorkspace = FindWorkspaceIndex(th.h.workspaces, "/path/a")
+	th.h.list.SetFilter("/path/a")
+
+	// Simulate Running -> Ready for instance in the VIEWED workspace (/path/a).
+	th.SimulateMetadataTick([]instanceMetaResult{
+		{instance: instA, updated: false, hasPrompt: false},
+		{instance: instB, updated: true},
+	})
+
+	assert.Equal(t, session.Ready, instA.Status)
+	assert.True(t, instA.ReadyAcknowledged, "instance in viewed workspace should be auto-acknowledged")
+	assert.False(t, instA.NotifiedReady, "notification should NOT fire for viewed workspace")
+
+	// Now simulate Running -> Ready for instance in NON-VIEWED workspace (/path/b).
+	instB.SetStatus(session.Running) // ensure it's Running first
+	th.SimulateMetadataTick([]instanceMetaResult{
+		{instance: instA, updated: false, hasPrompt: false},
+		{instance: instB, updated: false, hasPrompt: false},
+	})
+
+	assert.Equal(t, session.Ready, instB.Status)
+	assert.False(t, instB.ReadyAcknowledged, "instance in non-viewed workspace should NOT be acknowledged")
+	assert.True(t, instB.NotifiedReady, "notification SHOULD fire for non-viewed workspace")
+}
+
+func TestAcknowledgeOnWorkspaceSwitch(t *testing.T) {
+	instA := makeInstance("/path/a", session.Running)
+	instB := makeInstance("/path/b", session.Ready)
+	h := newTestHome([]*session.Instance{instA, instB})
+	h.tabbedWindow = ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+
+	h.syncWorkspaceUI()
+	require.Len(t, h.workspaces, 2)
+
+	// Start on workspace /path/a.
+	h.activeWorkspace = FindWorkspaceIndex(h.workspaces, "/path/a")
+	h.list.SetFilter("/path/a")
+
+	// Verify /path/b has HasReady before switch.
+	var wsB *Workspace
+	for i := range h.workspaces {
+		if h.workspaces[i].Path == "/path/b" {
+			wsB = &h.workspaces[i]
+		}
+	}
+	require.True(t, wsB.HasReady, "/path/b should have HasReady before switch")
+	assert.False(t, instB.ReadyAcknowledged, "instB should not be acknowledged yet")
+
+	// Switch to workspace /path/b.
+	h.activeWorkspace = FindWorkspaceIndex(h.workspaces, "/path/b")
+	h.list.SetFilter("/path/b")
+	h.acknowledgeVisibleReady()
+
+	// instB should now be acknowledged.
+	assert.True(t, instB.ReadyAcknowledged, "instB should be acknowledged after switching to its workspace")
+
+	// HasReady should be false after re-sync.
+	for i := range h.workspaces {
+		if h.workspaces[i].Path == "/path/b" {
+			wsB = &h.workspaces[i]
+		}
+	}
+	assert.False(t, wsB.HasReady, "HasReady should clear after acknowledging visible Ready instances")
 }

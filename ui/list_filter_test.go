@@ -243,3 +243,18 @@ func TestSetSelectedInstance_OutOfBounds(t *testing.T) {
 	l.SetSelectedInstance(5)
 	assert.Equal(t, "a1", l.GetSelectedInstance().Title)
 }
+
+// --- Blink frame logic ---
+
+func TestBlinkFrameToggle(t *testing.T) {
+	l := newTestList()
+
+	// blinkOn toggles every 6 frames (~500ms at 12 FPS MiniDot).
+	// Frames 0-5: bright (true), 6-11: dim (false), 12-17: bright, etc.
+	for frame := 0; frame < 24; frame++ {
+		expectedBright := (frame/6)%2 == 0
+		assert.Equal(t, expectedBright, l.blinkOn(),
+			"frame %d: expected blinkOn=%v", frame, expectedBright)
+		l.IncrementBlinkFrame()
+	}
+}
