@@ -55,6 +55,10 @@ The preview pane (`app/preview.go`) captures tmux output asynchronously. Expensi
 
 Profiles are named launch configurations in `config.json`. The overlay in `ui/overlay/` shows a profile picker when more than one profile is defined. Profiles decouple "what agent to launch" from session creation.
 
+### 10. Program-Specific Launch Keys (post-Phase-6)
+
+`KeyNew` was replaced with three dedicated keys: `n` (pi-mono), `b` (opencode), `m` (claude). `N` still opens the full profile/branch picker. The program constants (`ProgramOpencode`, `ProgramPiMono`) in `session/tmux/tmux.go` include `env -u` prefixes — `resolveBaseProgram()` strips `env` and its flags to get the bare binary name for prompt detection. When adding a new `env -u VAR program` constant, verify `resolveBaseProgram()` handles the prefix correctly or it will match `"env"` instead of the actual program and break `HasUpdated()` / `CheckAndHandleTrustPrompt()`.
+
 ## Component Relationships
 
 ```

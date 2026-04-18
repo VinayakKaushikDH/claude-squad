@@ -12,7 +12,7 @@ AI coding agents are powerful but sequential by default. A developer typically r
 
 ## User Experience Goals
 
-- **Zero friction startup**: `cs` opens the TUI immediately. Creating a new session is one keypress (`n` or `N`).
+- **Zero friction startup**: `cs` opens the TUI immediately. Creating a new session is one keypress: `n` (pi-mono), `b` (opencode), `m` (claude), or `N` (profile/branch picker).
 - **Non-blocking**: Agents run in the background. The user can switch between them, review diffs, or start new ones without interrupting running agents.
 - **Safe review before push**: The diff view and `s` (submit/push) workflow keeps the human in the loop.
 - **Yolo mode for trust**: `-y` / `--autoyes` lets experienced users skip confirmation prompts entirely.

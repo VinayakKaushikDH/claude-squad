@@ -10,7 +10,9 @@ const (
 	KeyUp KeyName = iota
 	KeyDown
 	KeyEnter
-	KeyNew
+	KeyNewPiMono
+	KeyNewOpencode
+	KeyNewClaude
 	KeyKill
 	KeyQuit
 	KeyReview
@@ -44,7 +46,9 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"N":          KeyPrompt,
 	"enter":      KeyEnter,
 	"o":          KeyEnter,
-	"n":          KeyNew,
+	"n":          KeyNewPiMono,
+	"b":          KeyNewOpencode,
+	"m":          KeyNewClaude,
 	"D":          KeyKill,
 	"q":          KeyQuit,
 	"tab":        KeyTab,
@@ -78,9 +82,17 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithKeys("enter", "o"),
 		key.WithHelp("↵/o", "open"),
 	),
-	KeyNew: key.NewBinding(
+	KeyNewPiMono: key.NewBinding(
 		key.WithKeys("n"),
-		key.WithHelp("n", "new"),
+		key.WithHelp("n", "new pi"),
+	),
+	KeyNewOpencode: key.NewBinding(
+		key.WithKeys("b"),
+		key.WithHelp("b", "new opencode"),
+	),
+	KeyNewClaude: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "new claude"),
 	),
 	KeyKill: key.NewBinding(
 		key.WithKeys("D"),

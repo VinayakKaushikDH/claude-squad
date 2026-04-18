@@ -7,6 +7,7 @@ import (
 	"claude-squad/notify"
 	"claude-squad/session"
 	"claude-squad/session/git"
+	"claude-squad/session/tmux"
 	"claude-squad/session/jj"
 	"claude-squad/session/vcs"
 	"claude-squad/ui"
@@ -943,15 +944,31 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.promptAfterName = true
 
 		return m, fetchCmd
-	case keys.KeyNew:
+	case keys.KeyNewPiMono, keys.KeyNewOpencode, keys.KeyNewClaude:
 		if m.list.NumAllInstances() >= GlobalInstanceLimit {
 			return m, m.handleError(
 				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 		}
+
+		var program string
+		switch name {
+		case keys.KeyNewPiMono:
+			program = tmux.ProgramPiMono
+		case keys.KeyNewOpencode:
+			program = tmux.ProgramOpencode
+		case keys.KeyNewClaude:
+			claudeCmd, err := config.GetClaudeCommand()
+			if err != nil {
+				program = tmux.ProgramClaude
+			} else {
+				program = claudeCmd
+			}
+		}
+
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
 			Path:    m.currentRepoPath,
-			Program: m.program,
+			Program: program,
 		})
 		if err != nil {
 			return m, m.handleError(err)

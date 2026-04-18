@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,6 +24,45 @@ const ProgramClaude = "claude"
 
 const ProgramAider = "aider"
 const ProgramGemini = "gemini"
+const ProgramOpencode = "env -u CLAUDE_CODE_OAUTH_TOKEN -u GITHUB_TOKEN opencode"
+const ProgramPiMono = "env -u CLAUDE_CODE_OAUTH_TOKEN -u GITHUB_TOKEN pi"
+
+// resolveBaseProgram extracts the base program name from a full command string.
+// It strips paths (e.g., "/usr/local/bin/claude" → "claude"), flags
+// (e.g., "aider --model foo" → "aider"), and env wrappers
+// (e.g., "env -u VAR opencode" → "opencode"), returning just the binary name.
+func resolveBaseProgram(program string) string {
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return program
+	}
+
+	// Skip past "env" and its flags/assignments (e.g., "env -u VAR -i KEY=VAL program")
+	i := 0
+	if filepath.Base(parts[0]) == "env" {
+		i++
+		for i < len(parts) {
+			if strings.HasPrefix(parts[i], "-") {
+				// Flag like -u, -i; if it's -u or -S, skip the next arg too
+				if (parts[i] == "-u" || parts[i] == "-S") && i+1 < len(parts) {
+					i += 2
+				} else {
+					i++
+				}
+			} else if strings.Contains(parts[i], "=") {
+				// Environment variable assignment like KEY=VAL
+				i++
+			} else {
+				break
+			}
+		}
+	}
+
+	if i >= len(parts) {
+		return filepath.Base(parts[0])
+	}
+	return filepath.Base(parts[i])
+}
 
 // TmuxSession represents a managed tmux session
 type TmuxSession struct {
@@ -165,7 +205,9 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 		return false
 	}
 
-	if strings.HasSuffix(t.program, ProgramClaude) {
+	base := resolveBaseProgram(t.program)
+	switch base {
+	case ProgramClaude:
 		if strings.Contains(content, "Do you trust the files in this folder?") ||
 			strings.Contains(content, "new MCP server") {
 			if err := t.TapEnter(); err != nil {
@@ -173,7 +215,7 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 			}
 			return true
 		}
-	} else {
+	default:
 		if strings.Contains(content, "Open documentation url for more info") {
 			if err := t.TapDAndEnter(); err != nil {
 				log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
@@ -246,13 +288,21 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		return false, false
 	}
 
-	// Only set hasPrompt for claude and aider. Use these strings to check for a prompt.
-	if t.program == ProgramClaude {
+	// Detect idle prompts per program using the normalized base name.
+	base := resolveBaseProgram(t.program)
+	switch base {
+	case ProgramClaude:
 		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
-	} else if strings.HasPrefix(t.program, ProgramAider) {
+	case ProgramAider:
 		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
-	} else if strings.HasPrefix(t.program, ProgramGemini) {
+	case ProgramGemini:
 		hasPrompt = strings.Contains(content, "Yes, allow once")
+	case ProgramOpencode:
+		// TODO: discover exact idle prompt string by running opencode
+		hasPrompt = strings.Contains(content, ">")
+	case ProgramPiMono:
+		// TODO: discover exact idle prompt string by running pi
+		hasPrompt = strings.Contains(content, ">")
 	}
 
 	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
@@ -331,6 +381,9 @@ func (t *TmuxSession) Attach() (chan struct{}, error) {
 				log.InfoLog.Printf("nuked first stdin: %s", buf[:nr])
 				continue
 			}
+
+			// DEBUG: log every stdin read so we can validate the Ctrl+Q detection hypothesis
+			log.InfoLog.Printf("stdin read: nr=%d bytes=%x", nr, buf[:nr])
 
 			// Check for Ctrl+q (ASCII 17)
 			if nr == 1 && buf[0] == 17 {

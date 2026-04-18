@@ -2,10 +2,11 @@
 
 ## Current Focus
 
-**Phase 6 complete**: multi-instance bug fixes, notification system overhaul, and post-Phase-6 polish all committed. Ready to push.
+**Phase 6 complete + pi-mono/opencode integration added**: program-specific launch keys (`n`/`b`/`m`) implemented; `resolveBaseProgram()` normalization in `session/tmux/tmux.go`; env stripping for pi/opencode launch commands confirmed working.
 
 ## Recent Changes (from git log)
 
+- **pi-mono/opencode integration**: `n` launches pi-mono, `b` launches opencode, `m` launches claude; `KeyNew` replaced with `KeyNewPiMono`/`KeyNewOpencode`/`KeyNewClaude` in `keys/keys.go`; `ProgramOpencode`/`ProgramPiMono` constants added to `session/tmux/tmux.go`; `resolveBaseProgram()` helper normalizes program matching for `HasUpdated()` and `CheckAndHandleTrustPrompt()`; launch commands strip `CLAUDE_CODE_OAUTH_TOKEN` and `GITHUB_TOKEN`
 - Phase 6 post-compaction fixes: auto-acknowledge was firing on every tick (not just Running→Ready transition); blank icon slot (need 2-space padding not empty string); cross-instance workspace hang (auto-switch to `currentRepoPath` after merge if active workspace is empty); `SetDetachedSize` flicker (cache inside `SetDetachedSize`, never invalidate)
 - Phase 6: notification system redesign — `ReadyAcknowledged` persisted, auto-ack when in workspace, separate tab badge / blink control, 1s disk reload
 - Phase 6 bug fixes: blink persists after Enter (render never checked flag), ctrl+q slow (key went through 2-pass menu highlighting), workspace quit guard, cross-instance kill overwrote disk with stale cache (`DeleteInstanceByTitle` atomic fix), window shrinks 2s (tmux resize caching via `lastCols`/`lastRows`)
@@ -66,7 +67,8 @@ Current version: **1.0.17** (Phase 6 changes committed, not yet pushed)
 
 ## Next Steps
 
-- Push Phase 6 commits (`jj git push`)
+- Update idle prompt detection strings for opencode and pi-mono in `session/tmux/tmux.go` — currently placeholder `">"`, needs the actual idle prompt text from each program
+- Push Phase 6 + pi/opencode integration commits (`jj git push`)
 - **Phase 7 — Async preview/terminal rendering**: `instanceChanged()` currently runs synchronous `tmux capture-pane` subprocesses inside Bubbletea's `Update` handler, blocking key processing (including Ctrl+Q) for 50–200ms+ per call. Fix: move tmux captures into background `tea.Cmd` goroutines that write to a cache; `instanceChanged()` reads the cache (never blocks). This eliminates the main source of Ctrl+Q sluggishness and preview tick jank.
 - Cross-process notification sync: `mergeReloadedInstances` now propagates `ReadyAcknowledged` from disk (committed but not pushed).
 - Consider adding `TmuxAlive()` guard in `snapshotActiveInstances` to skip dead instances and prevent error-flood / false-Ready status on orphaned sessions

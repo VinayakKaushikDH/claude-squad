@@ -27,7 +27,8 @@
 
 - **tmux** — must be installed on the host. Claude Squad creates/manages tmux sessions.
 - **gh** (GitHub CLI) — used for pushing branches and PR creation.
-- The AI agent itself (e.g. `claude`, `codex`, `gemini`, `aider`) must be installed separately.
+- The AI agent itself (e.g. `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`) must be installed separately.
+- **pi** and **opencode** must be launched with `env -u CLAUDE_CODE_OAUTH_TOKEN -u GITHUB_TOKEN` — pi reads `GITHUB_TOKEN` from the environment and tries to use it as an Anthropic API key, causing "Personal Access Tokens are not supported" auth failures. Both tokens must be stripped.
 - **jj** (Jujutsu) — required only when `vcs_type: "jj"` is configured. Tested against v0.39.0. Note: jj uses file-level repo locking — concurrent mutating commands (`jj describe`, `jj new`) from multiple agent workspaces can conflict; the `JJWorkspace` implementation must use retry-with-backoff on mutating calls.
   - `jj bookmark list <name>` exits 0 even when the bookmark does not exist (prints a Warning line instead). Use `bookmarkExists()` in `session/jj/util.go` which checks for `bookmarkName + ":"` while skipping Warning/Hint lines.
   - `jj split` is interactive — it opens an editor and hangs. Use `EDITOR=true jj split ...` to suppress the editor when calling from code or scripts.

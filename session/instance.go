@@ -11,10 +11,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 
 	"fmt"
 	"os"
-	"strings"
+
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -449,12 +450,6 @@ func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
 // CheckAndHandleTrustPrompt checks for and dismisses the trust prompt for supported programs.
 func (i *Instance) CheckAndHandleTrustPrompt() bool {
 	if !i.started || i.tmuxSession == nil {
-		return false
-	}
-	program := i.Program
-	if !strings.HasSuffix(program, tmux.ProgramClaude) &&
-		!strings.HasSuffix(program, tmux.ProgramAider) &&
-		!strings.HasSuffix(program, tmux.ProgramGemini) {
 		return false
 	}
 	return i.tmuxSession.CheckAndHandleTrustPrompt()
