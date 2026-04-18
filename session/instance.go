@@ -77,10 +77,17 @@ type Instance struct {
 	// NotifiedReady prevents duplicate notifications per Ready transition.
 	NotifiedReady bool
 
-	// ReadyAcknowledged tracks whether the user has "seen" this instance's Ready
-	// state by pressing Enter or by being in the workspace when it became Ready.
-	// Persisted to disk for cross-process sync.
+	// ReadyAcknowledged tracks whether the user has explicitly acknowledged this
+	// instance's Ready state (by pressing Enter). Persisted to disk for
+	// cross-process sync.
 	ReadyAcknowledged bool
+
+	// JustDetached is set after the user detaches from this instance (Ctrl+Q)
+	// and cleared after the first metadataUpdateDoneMsg is processed. It
+	// prevents the metadata tick that was computed during the attach (and may
+	// have seen a hash change from monitorWindowSize resizing the terminal) from
+	// clearing the freshly-acknowledged ReadyAcknowledged flag.
+	JustDetached bool
 
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
 	selectedBranch string

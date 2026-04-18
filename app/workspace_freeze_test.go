@@ -493,8 +493,8 @@ func TestMetadataUpdate_NotificationSuppressedWhenViewingWorkspace(t *testing.T)
 	})
 
 	assert.Equal(t, session.Ready, instA.Status)
-	assert.True(t, instA.ReadyAcknowledged, "instance in viewed workspace should be auto-acknowledged")
-	assert.False(t, instA.NotifiedReady, "notification should NOT fire for viewed workspace")
+	assert.False(t, instA.ReadyAcknowledged, "instance in viewed workspace should NOT be auto-acknowledged — blink must appear")
+	assert.False(t, instA.NotifiedReady, "OS notification should NOT fire for viewed workspace")
 
 	// Now simulate Running -> Ready for instance in NON-VIEWED workspace (/path/b).
 	instB.SetStatus(session.Running) // ensure it's Running first

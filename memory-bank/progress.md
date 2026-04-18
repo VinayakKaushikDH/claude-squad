@@ -22,7 +22,9 @@
 - **Multi-workspace tabs** (Phase 4): `[`/`]` keys switch between workspaces derived from launch directory; filtered instance list per tab; green tab highlight for workspaces with Ready agents
 - **OS notifications** (Phase 4): macOS (osascript) and Linux (notify-send) alerts on Running→Ready transition; dedup via `NotifiedReady` flag; configurable via `"notifications"` in config.json
 - **Notification acknowledgment system** (Phase 6): `ReadyAcknowledged` persisted in `InstanceData` JSON for cross-process sync; auto-acknowledged when agent becomes Ready while user is in that workspace; tab badge suppressed for active workspace via `DeriveWorkspaces(instances, activeWorkspacePath)`; acknowledged agent shows no icon (dot removed entirely); blink stops only on Enter (not on Up/Down navigation or workspace switch)
-- **Post-Phase-6 notification fixes**: auto-acknowledge guard on `prevStatus == session.Running` (was firing every tick); 2-space icon slot padding for acknowledged agents; auto-switch to `currentRepoPath` after disk reload empties active workspace; `SetDetachedSize` caches size to prevent ~2s resize flicker from two processes fighting
+- **Post-Phase-6 notification fixes**: auto-acknowledge guard on `prevStatus == session.Running` (was firing every tick); 2-space icon slot padding for acknowledged agents; auto-switch to `currentRepoPath` after disk reload empties active workspace; `SetDetachedSize` caches size (with `sizeMu` mutex) and resets to 0 on `Detach()` to prevent ~2s resize flicker; auto-ack on workspace view removed (was suppressing notifications user still needed)
+- **Ctrl+Q detach latency eliminated**: three root causes fixed — (1) post-detach callback no longer calls `m.instanceChanged()` synchronously (was running `tmux capture-pane -J` blocking Bubbletea render, ~10–100ms every detach); (2) `monitorWindowSize` goroutines removed from `t.wg` (was causing `Detach()`'s `wg.Wait()` to stall ~50ms probabilistically if 2s poll goroutine was mid-`tmux resize-window`); (3) **actual root cause**: `makeNonBlockingFile()` in `tmux_unix.go` called from `Attach()` in `tmux.go` — PTY master from `creack/pty` is blocking mode, causing `t.ptmx.Close()` in `Detach()` to deadlock indefinitely when agent is idle (Go's `runtime_Semacquire` waits for the `io.Copy` Read to return). Fix: dup fd + `SetNonblock` + `os.NewFile` registers fd with the netpoller so `pd.evict()` on Close unparks the blocked goroutine immediately. Preview now refreshes via 100ms `previewTickMsg` loop.
+- **pi-mono + opencode Ctrl+Q + terminal leakage fixes**: stdin goroutine scans full buffer for `0x11` (was `nr==1` check — failed when mouse events bundled with keypress); `term.GetState`/`term.Restore` + explicit ANSI disable sequences on detach fix "extended keys are on" terminal state leakage from pi/opencode
 - **pi-mono + opencode integration**: `n` launches pi-mono, `b` launches opencode, `m` launches claude; `ProgramOpencode`/`ProgramPiMono` constants strip `CLAUDE_CODE_OAUTH_TOKEN` and `GITHUB_TOKEN`; `resolveBaseProgram()` normalizes `env -u` prefixed commands for prompt detection; latent `HasUpdated()` vs `CheckAndHandleTrustPrompt()` matching inconsistency fixed
 - **Atomic delete** (Phase 6): `DeleteInstanceByTitle` in `config/state.go` does read-modify-write under single flock, preventing stale-cache overwrite when multiple `cs` processes coexist
 - **Workspace quit guard** (Phase 6): `handleQuit` blocks if active workspace path differs from launch path (`currentRepoPath`)
@@ -32,7 +34,8 @@
 
 ## Known Issues
 
-None currently tracked. Check upstream issues at `https://github.com/smtg-ai/claude-squad/issues` for community-reported bugs.
+- **Idle prompt strings for pi-mono and opencode** are placeholders (`">"`); real idle prompt text not yet confirmed. Until fixed, `HasUpdated()` may not correctly detect when these agents are idle.
+- Orphaned instances with dead tmux sessions cause `capture-pane` exit-status-1 errors every ~500ms. Workaround: `cs reset`. Permanent fix: `TmuxAlive()` guard in `snapshotActiveInstances`.
 
 ## Remaining Work / Planned
 

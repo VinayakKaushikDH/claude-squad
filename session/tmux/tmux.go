@@ -15,9 +15,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 const ProgramClaude = "claude"
@@ -98,8 +100,27 @@ type TmuxSession struct {
 
 	// lastCols/lastRows cache the last-applied window size so redundant
 	// resize calls (from the periodic poll) can be skipped.
+	// sizeMu protects lastCols/lastRows: SetDetachedSize is called from the
+	// Bubbletea main loop while monitorWindowSize goroutines call updateWindowSize
+	// concurrently during attach.
+	sizeMu   sync.Mutex
 	lastCols int
 	lastRows int
+
+	// savedTermState holds the terminal state captured just before Attach() so
+	// that Detach() can restore it. Attached programs (pi, opencode) may enable
+	// extended key reporting or mouse modes whose escape sequences get forwarded
+	// to the outer terminal; without an explicit restore those modes persist
+	// after detach and corrupt the TUI.
+	savedTermState *term.State
+
+	// suppressNextUpdate, when true, causes the next HasUpdated() call to
+	// consume the current pane content into the hash without reporting a change.
+	// Set by Detach() to absorb the resize-triggered redraw that happens when
+	// SetDetachedSize restores the session to preview dimensions after detach.
+	// Without this, the resize causes a spurious updated=true → Running transition
+	// that clears a freshly-acknowledged ReadyAcknowledged flag.
+	suppressNextUpdate atomic.Bool
 }
 
 const TmuxPrefix = "claudesquad_"
@@ -305,14 +326,30 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		hasPrompt = strings.Contains(content, ">")
 	}
 
-	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = t.monitor.hash(content)
+	newHash := t.monitor.hash(content)
+	if t.suppressNextUpdate.Swap(false) {
+		// Absorb the resize-triggered redraw that follows a Detach(). Update the
+		// hash so future checks compare from the post-resize content, but do not
+		// report this as an agent update.
+		t.monitor.prevOutputHash = newHash
+		return false, hasPrompt
+	}
+	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
+		t.monitor.prevOutputHash = newHash
 		return true, hasPrompt
 	}
 	return false, hasPrompt
 }
 
 func (t *TmuxSession) Attach() (chan struct{}, error) {
+	// Save terminal state so Detach() can restore it. Attached programs may
+	// enable extended key reporting or mouse modes; those ANSI sequences are
+	// forwarded to the outer terminal via io.Copy and persist after detach
+	// unless we explicitly undo them.
+	if state, err := term.GetState(int(os.Stdin.Fd())); err == nil {
+		t.savedTermState = state
+	}
+
 	// Create the PTY attachment to the tmux session. This is the ONLY place a
 	// PTY is created — Restore() deliberately does not create one so that
 	// multiple cs processes can coexist without disrupting each other's PTYs.
@@ -320,7 +357,7 @@ func (t *TmuxSession) Attach() (chan struct{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error attaching to tmux session: %w", err)
 	}
-	t.ptmx = ptmx
+	t.ptmx = makeNonBlockingFile(ptmx, "pty-master")
 
 	t.attachCh = make(chan struct{})
 
@@ -382,14 +419,16 @@ func (t *TmuxSession) Attach() (chan struct{}, error) {
 				continue
 			}
 
-			// DEBUG: log every stdin read so we can validate the Ctrl+Q detection hypothesis
-			log.InfoLog.Printf("stdin read: nr=%d bytes=%x", nr, buf[:nr])
-
-			// Check for Ctrl+q (ASCII 17)
-			if nr == 1 && buf[0] == 17 {
-				// Detach from the session
-				t.Detach()
-				return
+			// Check for Ctrl+q (ASCII 17) anywhere in the read buffer.
+			// We scan the full buffer rather than requiring nr==1 because TUI programs
+			// (pi, opencode) enable mouse reporting, causing terminal sequences to arrive
+			// on stdin interleaved with keystrokes. When Ctrl+Q lands alongside other bytes,
+			// nr>1 and a single-byte check never fires — making detach feel frozen.
+			for i := 0; i < nr; i++ {
+				if buf[i] == 17 {
+					t.Detach()
+					return
+				}
 			}
 
 			// Forward other input to tmux
@@ -469,6 +508,43 @@ func (t *TmuxSession) Detach() {
 	// Cancel goroutines created by Attach.
 	t.cancel()
 	t.wg.Wait()
+
+	// Reset cached dimensions so the next SetDetachedSize call (from the
+	// preview pane) always issues a resize instead of being skipped because
+	// lastCols/lastRows still hold the full-terminal values set during attach.
+	t.sizeMu.Lock()
+	t.lastCols = 0
+	t.lastRows = 0
+	t.sizeMu.Unlock()
+
+	// Absorb the resize-triggered redraw. SetDetachedSize (called from the
+	// Bubbletea loop momentarily after this) will resize the tmux window back
+	// to preview dimensions, causing the program inside to redraw. The next
+	// HasUpdated() call will see a changed hash and falsely report updated=true,
+	// which would set ReadyAcknowledged=false and re-show the blink even though
+	// the user just acknowledged it. Suppress exactly that one check.
+	t.suppressNextUpdate.Store(true)
+
+	// Restore the terminal state saved at Attach time. This undoes any tty-level
+	// changes (raw mode, echo flags, etc.) that the attached program may have made.
+	if t.savedTermState != nil {
+		_ = term.Restore(int(os.Stdin.Fd()), t.savedTermState)
+		t.savedTermState = nil
+	}
+
+	// Send explicit ANSI sequences to disable application-level terminal modes
+	// that term.Restore (tcsetattr) cannot undo. Programs like pi/opencode enable
+	// extended key reporting and mouse tracking; without these resets those modes
+	// persist in the terminal emulator after detach and corrupt the TUI.
+	_, _ = os.Stdout.Write([]byte(
+		"\033[>4;0m" +   // XTerm modifyOtherKeys off
+		"\033[=0u" +     // kitty keyboard protocol off
+		"\033[?1000l" +  // mouse reporting off
+		"\033[?1002l" +  // mouse cell-motion off
+		"\033[?1003l" +  // all-motion mouse off
+		"\033[?1006l" +  // SGR mouse extension off
+		"\033[?2004l",   // bracketed paste off
+	))
 }
 
 // Close terminates the tmux session and cleans up resources
@@ -504,11 +580,14 @@ func (t *TmuxSession) Close() error {
 // SetDetachedSize set the width and height of the session while detached. This makes the
 // tmux output conform to the specified shape.
 func (t *TmuxSession) SetDetachedSize(width, height int) error {
+	t.sizeMu.Lock()
 	if width == t.lastCols && height == t.lastRows {
+		t.sizeMu.Unlock()
 		return nil
 	}
 	t.lastCols = width
 	t.lastRows = height
+	t.sizeMu.Unlock()
 	return t.resizeViaTmux(width, height)
 }
 
@@ -524,11 +603,14 @@ func (t *TmuxSession) resizeViaTmux(cols, rows int) error {
 // both the tmux window (to undo any forced size from SetDetachedSize) and the
 // PTY. Otherwise falls back to tmux CLI only.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
+	t.sizeMu.Lock()
 	if cols == t.lastCols && rows == t.lastRows {
+		t.sizeMu.Unlock()
 		return nil
 	}
 	t.lastCols = cols
 	t.lastRows = rows
+	t.sizeMu.Unlock()
 
 	if t.ptmx != nil {
 		// Resize the tmux window first to undo any forced size from SetDetachedSize.

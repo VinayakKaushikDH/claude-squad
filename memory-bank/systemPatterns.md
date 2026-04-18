@@ -92,10 +92,10 @@ Tab badge and individual agent blink/dot are controlled by **two separate mechan
 
 | Signal | Controls | Set when | Cleared when |
 |--------|----------|----------|--------------|
-| `ReadyAcknowledged` (persisted in `InstanceData`) | Agent icon blink + green dot | Enter pressed on agent; OR agent becomes Ready while user is already in that workspace (auto-ack) | Agent resumes (goes back to Running) |
+| `ReadyAcknowledged` (persisted in `InstanceData`) | Agent icon blink + green dot | Enter pressed on agent | Agent resumes (goes back to Running) |
 | `activeWorkspacePath` param in `DeriveWorkspaces` | Tab badge (`HasReady`) suppressed for the active tab | Derived from current `m.workspaces[m.activeWorkspace]` | N/A — always computed fresh |
 
-`ReadyAcknowledged` is **persisted to disk** (field in `InstanceData` JSON) so cross-process acknowledgment propagates via the existing disk reload mechanism (~1 second). Workspace switching must NOT call `acknowledgeVisibleReady` or set `ReadyAcknowledged` — that was tried and rejected. Only Enter sets `ReadyAcknowledged`.
+`ReadyAcknowledged` is **persisted to disk** (field in `InstanceData` JSON) so cross-process acknowledgment propagates via the existing disk reload mechanism (~1 second). Only Enter (`app.go` attach path) sets `ReadyAcknowledged` — workspace switching and being in the same workspace while an agent becomes Ready must NOT auto-acknowledge. That auto-ack was tried and removed because it silently suppressed notifications the user still needed to see.
 
 `DeriveWorkspaces(instances []Instance, activeWorkspacePath string)` — the second parameter suppresses the `HasReady` badge for the workspace the user is currently viewing. Test callers pass `""` for no suppression.
 
@@ -107,7 +107,19 @@ When `ReadyAcknowledged` is true, the Render function must emit `"  "` (2 spaces
 
 After `mergeReloadedInstances`, if the active workspace has no remaining instances (e.g. another process killed them all), auto-switch to `currentRepoPath` to avoid an empty/stuck view.
 
-`SetDetachedSize` must cache its own `lastCols`/`lastRows` and skip the tmux call when dimensions are unchanged — do NOT invalidate the cache from `SetDetachedSize`. The original approach called `t.lastCols = 0` to force a resize, causing two processes to fight and produce ~2-second window flicker.
+`TmuxSession.lastCols`/`lastRows` are shared between the `monitorWindowSize` goroutine (writes full-terminal dims every 2s while attached) and `SetDetachedSize` (called from the Bubbletea main loop). These fields are protected by `sizeMu sync.Mutex`. On `Detach()`, reset both to 0 so the first `SetDetachedSize` call after return always issues a resize to preview dims. `SetDetachedSize` caches and skips the tmux call when dims are unchanged — do NOT reset to 0 from inside `SetDetachedSize`; reset only from `Detach()`.
+
+### 11. Ctrl+Q Detection in stdin Goroutine (`tmux.go`)
+
+The stdin relay goroutine detects Ctrl+Q by scanning the **full read buffer** for byte `0x11`, not by requiring `nr == 1`. Pi/opencode enable mouse reporting (SGR mode), so stdin is flooded with multi-byte escape sequences; Ctrl+Q arrives bundled with other bytes (`nr > 1`) and the single-byte check fails silently — the user sees a slow/frozen detach that only fires when a quiet moment happens to land the byte alone. Any new detach-key detection must scan the whole buffer.
+
+### 13. PTY Master fd Must Be Non-Blocking (`tmux_unix.go` + `tmux.go`)
+
+`creack/pty`'s `pty.Start()` opens the PTY master fd in blocking mode. Go's `os.File.Close()` for non-netpoller (blocking) files calls `runtime_Semacquire` which waits for all in-progress `Read` calls to return before closing the fd. The `io.Copy(os.Stdout, t.ptmx)` goroutine blocks indefinitely in `Read` when the agent is idle — so `t.ptmx.Close()` in `Detach()` never returns, causing an infinite deadlock. Fix: `makeNonBlockingFile()` in `tmux_unix.go` dups the fd, calls `syscall.SetNonblock`, and wraps with `os.NewFile`; Go 1.23+ detects `O_NONBLOCK` and registers the fd with the netpoller, making `Close()` call `pd.evict()` which immediately unparks the blocked goroutine. This function must be called immediately after `pty.Start()` in `Attach()` before storing `t.ptmx`.
+
+### 12. Terminal State Save/Restore on Attach/Detach (`tmux.go`)
+
+Programs like pi and opencode enable extended key modes (`\033[>4;1m`, kitty `\033[=1u`) and mouse reporting via the PTY. These live in the terminal emulator's application state, not the kernel tty, so `tcsetattr` cannot undo them. Pattern: call `term.GetState` to save tty attrs before creating the PTY in `Attach()`; after `wg.Wait()` in `Detach()`, call `term.Restore` then send explicit ANSI reset sequences (`\033[>4;0m`, `\033[=0u`, mouse disable, bracketed-paste disable). Skipping this leaves the outer TUI terminal dirty and produces "extended keys are on" warnings.
 
 ## Invariants
 

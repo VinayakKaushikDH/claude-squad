@@ -468,7 +468,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevStatus := r.instance.Status
 			if r.updated {
 				r.instance.SetStatus(session.Running)
-				r.instance.ReadyAcknowledged = false
+				if !r.instance.JustDetached {
+					r.instance.ReadyAcknowledged = false
+				}
+				r.instance.JustDetached = false
 			} else if r.hasPrompt {
 				r.instance.TapEnter()
 				r.instance.NotifiedReady = false
@@ -477,12 +480,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Check if user is currently viewing this instance's workspace.
 				isViewingWorkspace := m.activeWorkspace < len(m.workspaces) &&
 					m.workspaces[m.activeWorkspace].Path == r.instance.Path
-				// Auto-acknowledge only on the actual Running→Ready transition,
-				// not on every tick while already Ready in the viewed workspace.
-				if isViewingWorkspace && prevStatus == session.Running {
-					r.instance.ReadyAcknowledged = true
-				}
 				// Fire notification on Running -> Ready transition (only if not viewing).
+				// Do NOT auto-acknowledge here — the blink should always appear so the
+				// user sees the Ready signal even when already in that workspace.
+				// Acknowledgment happens when the user presses Enter.
 				if prevStatus == session.Running && !r.instance.NotifiedReady && !isViewingWorkspace && m.appConfig.GetNotifications() {
 					r.instance.NotifiedReady = true
 					title := "Claude Squad"
@@ -1127,6 +1128,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					return
 				}
 				<-ch
+				selected.JustDetached = true
 				selected.ReadyAcknowledged = true
 				m.state = stateDefault
 				m.syncWorkspaceUI()
@@ -1141,10 +1143,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return
 			}
 			<-ch
+			selected.JustDetached = true
 			selected.ReadyAcknowledged = true
 			m.state = stateDefault
 			m.syncWorkspaceUI()
-			m.instanceChanged()
+			// instanceChanged() is intentionally omitted here. Running tmux
+			// capture-pane synchronously inside Update blocks Bubbletea from
+			// rendering the TUI and is the primary cause of visible detach lag.
+			// The previewTickMsg loop fires within 100ms and refreshes the preview.
 		})
 		return m, nil
 	default:
