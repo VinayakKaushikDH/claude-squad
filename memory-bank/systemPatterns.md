@@ -74,6 +74,30 @@ config/          ← loads ~/.claude-squad/config.json
 daemon/          ← background daemon for auto-accept mode
 ```
 
+### 14. jj Two-Sided Entry/Exit Model
+
+The user-facing workflow for inspecting and amending agent work has two complementary operations:
+
+**Exit point — Checkout key (`c`) → `CheckoutInMainRepo()`**
+1. `workspace update-stale` in agent workspace (heal if stale)
+2. `workspace update-stale` in main repo (heal if stale — **required** before `jj edit`)
+3. `jj describe -m <snapshot msg>` in agent workspace (always snapshot, even if clean)
+4. `jj bookmark set <name> -r @` in agent workspace
+5. `jj edit <bookmark>` from `cmd.Dir = j.repoPath` (not `--repository`)
+6. `workspace update-stale` in agent workspace again (jj edit advanced op log)
+
+Result: both workspaces at the same commit. User can amend files in the main repo without creating a new commit.
+
+**Entry point — Enter key → `SyncFromMainRepo()` (called in `app.go` before attach)**
+1. `jj status` run with `cmd.Dir = j.repoPath` (snapshots user's file edits into current commit, advances op log)
+2. `workspace update-stale` in agent workspace (re-syncs agent filesystem to updated commit content)
+
+Result: agent workspace has the user's edits; no new commit created; graph stays linear; neither workspace is stale.
+
+**Critical constraint**: `jj edit` and `jj status` (when run as WC operations) must use `cmd.Dir` — passing `--repository` does not update the working copy. Only read-only queries can use `--repository`.
+
+**Staleness model**: A workspace becomes stale whenever another workspace in the same repo runs any command that advances the op log (describe, new, bookmark set, etc.). `--ignore-working-copy` prevents the current workspace from being snapshotted (and thus staling others), but does NOT prevent the current workspace from becoming stale from others. `workspace update-stale` heals staleness.
+
 ### 7. Testing jj Code
 
 Mock-based unit tests (e.g., `mockWorkspace` in `instance_test.go`) cannot catch jj command behavior bugs — they pass even when the real implementation is broken. Any new jj workspace behavior must be covered by integration tests in `session/jj/workspace_test.go` that spin up a real jj repo (using `setupTestJJRepo` helper). The 6 checkout tests are the reference pattern.

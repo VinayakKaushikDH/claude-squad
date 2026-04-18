@@ -18,10 +18,13 @@ func TestSanitizeBookmarkName(t *testing.T) {
 		expected string
 	}{
 		{"My Session Name", "my-session-name"},
-		{"feature/branch..name", "feature/branch.name"},
+		// Slashes are replaced with dashes to prevent nested workspace directories.
+		// A bookmark name like "feature/branch" would produce a workspace path of
+		// worktrees/feature/branch where worktrees/feature/ is never created.
+		{"feature/branch..name", "feature-branch.name"},
 		{"---leading---", "leading"},
 		{"UPPER_CASE_123", "upper_case_123"},
-		{"a/b/c", "a/b/c"},
+		{"a/b/c", "a-b-c"},
 		{"hello world!", "hello-world"},
 		{"..dotdot..", "dotdot"},
 		{".leading.dot", "leading.dot"},

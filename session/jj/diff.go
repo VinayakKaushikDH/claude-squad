@@ -24,11 +24,21 @@ func (j *JJWorkspace) Diff() *vcs.DiffStats {
 	}
 
 	// jj diff includes untracked files automatically — no staging step needed.
-	// Use a timeout to avoid blocking when another cs process holds the repo lock.
+	// Use a timeout to cover both the snapshot and diff steps.
 	ctx, cancel := context.WithTimeout(context.Background(), diffTimeout)
 	defer cancel()
 
-	args := []string{"--repository", j.workspacePath, "diff", "--from", j.baseChangeID, "--git"}
+	// Snapshot the working copy before diffing. jj diff uses --ignore-working-copy
+	// (to avoid repeatedly staling other workspaces on every poll tick), which means
+	// it reads from the last snapshot — not the live filesystem. Without this call
+	// the diff panel shows stale data whenever the agent writes files without running
+	// jj commands itself. Non-fatal: if the snapshot fails we fall through and diff
+	// against whatever snapshot currently exists.
+	snapCmd := exec.CommandContext(ctx, "jj", "--repository", j.workspacePath, "status")
+	snapCmd.CombinedOutput() //nolint:errcheck // snapshot errors are non-fatal
+
+	// --ignore-working-copy: reads from the fresh snapshot created above.
+	args := []string{"--repository", j.workspacePath, "diff", "--from", j.baseChangeID, "--git", "--ignore-working-copy"}
 	cmd := exec.CommandContext(ctx, "jj", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -63,21 +63,34 @@ func CleanupWorkspaces() error {
 		return fmt.Errorf("failed to get workspace directory: %w", err)
 	}
 
-	entries, err := os.ReadDir(configDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read workspace directory: %w", err)
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		return nil
 	}
 
+	// Walk the workspace directory and forget every jj workspace registration
+	// before deleting its directory. Without this step, jj retains stale workspace
+	// entries in the repo's op log; subsequent `jj log` / `jj status` calls print
+	// "working copy is stale" errors for each phantom workspace.
+	filepath.Walk(configDir, func(path string, info os.FileInfo, err error) error { //nolint:errcheck
+		if err != nil || !info.IsDir() || filepath.Base(path) != ".jj" {
+			return nil
+		}
+		wsPath := filepath.Dir(path)
+		wsName := filepath.Base(wsPath)
+		if repoPath, findErr := findJJRepoRoot(wsPath); findErr == nil {
+			_, _ = runJJCommandWithRetry(repoPath, "workspace", "forget", wsName, "--ignore-working-copy")
+		}
+		return filepath.SkipDir // don't descend into .jj internals
+	})
+
+	// Remove all workspace directories.
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to read workspace directory: %w", err)
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			wsPath := filepath.Join(configDir, entry.Name())
-			// We skip `jj workspace forget` here because we don't have a repo path to
-			// pass via --repository. jj will detect orphaned workspaces on next operation
-			// and clean them up automatically. Just remove the directory.
-			os.RemoveAll(wsPath)
+			os.RemoveAll(filepath.Join(configDir, entry.Name()))
 		}
 	}
 

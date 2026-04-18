@@ -531,6 +531,23 @@ func (i *Instance) CheckoutInMainRepo() error {
 	return i.workspace.CheckoutInMainRepo()
 }
 
+// SyncFromMainRepo syncs changes the user made in the main repo (while checked
+// out to this session's commit) into the agent workspace. Call this at the
+// entry point — just before attaching to the agent — so the agent sees the
+// user's latest edits before resuming work.
+//
+// jj only: git worktrees don't support multi-workspace sync; returns nil.
+func (i *Instance) SyncFromMainRepo() error {
+	if !i.started {
+		return nil
+	}
+	ws, ok := i.workspace.(*jj.JJWorkspace)
+	if !ok {
+		return nil
+	}
+	return ws.SyncFromMainRepo()
+}
+
 // Pause stops the tmux session and removes the worktree, preserving the branch
 func (i *Instance) Pause() error {
 	if !i.started {

@@ -1122,6 +1122,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Terminal tab: attach to terminal session
 		if m.tabbedWindow.IsInTerminalTab() {
 			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
+				// Entry point: sync any main-repo edits into the agent workspace.
+				if err := selected.SyncFromMainRepo(); err != nil {
+					log.ErrorLog.Printf("SyncFromMainRepo failed on attach: %v", err)
+				}
 				ch, err := m.tabbedWindow.AttachTerminal()
 				if err != nil {
 					m.handleError(err)
@@ -1137,6 +1141,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		// Show help screen before attaching
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
+			// Entry point: sync any main-repo edits into the agent workspace
+			// before the user starts talking to the agent.
+			if err := selected.SyncFromMainRepo(); err != nil {
+				log.ErrorLog.Printf("SyncFromMainRepo failed on attach: %v", err)
+			}
 			ch, err := m.list.Attach()
 			if err != nil {
 				m.handleError(err)

@@ -66,13 +66,15 @@ func (j *JJWorkspace) setupNewWorkspace() error {
 		return err
 	}
 
-	// Create workspace from the resolved change ID
+	// Create workspace from the resolved change ID.
 	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "add", "--revision", rev, j.workspacePath); err != nil {
 		return fmt.Errorf("failed to create jj workspace: %w", err)
 	}
 
-	// Capture base change ID from the new workspace (parent of working copy)
-	output, err := runJJCommand(j.workspacePath, "log", "-r", "@-", "--no-graph", "-T", "change_id")
+	// Capture base change ID from the new workspace (parent of working copy).
+	// --ignore-working-copy: read-only query, no WC snapshot needed.
+	// Use retry so transient lock contention doesn't abort the whole setup.
+	output, err := runJJCommandWithRetry(j.workspacePath, "log", "-r", "@-", "--no-graph", "-T", "change_id", "--ignore-working-copy")
 	if err != nil {
 		return fmt.Errorf("failed to get base change ID: %w", err)
 	}
@@ -90,14 +92,16 @@ func (j *JJWorkspace) setupFromExistingBookmark() error {
 	// Remove the directory: jj workspace add fails if the path already exists.
 	_ = os.RemoveAll(j.workspacePath)
 
-	// Create workspace from the bookmark's revision
+	// Create workspace from the bookmark's revision.
 	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "add", "--revision", j.bookmarkName, j.workspacePath); err != nil {
 		return fmt.Errorf("failed to create jj workspace from bookmark %s: %w", j.bookmarkName, err)
 	}
 
-	// Capture base change ID if not already set (e.g. resuming a paused session)
+	// Capture base change ID if not already set (e.g. resuming a paused session).
+	// --ignore-working-copy: read-only query, no WC snapshot needed.
+	// Use retry so transient lock contention doesn't abort the whole setup.
 	if j.baseChangeID == "" {
-		output, err := runJJCommand(j.workspacePath, "log", "-r", "@-", "--no-graph", "-T", "change_id")
+		output, err := runJJCommandWithRetry(j.workspacePath, "log", "-r", "@-", "--no-graph", "-T", "change_id", "--ignore-working-copy")
 		if err != nil {
 			return fmt.Errorf("failed to get base change ID: %w", err)
 		}
@@ -137,7 +141,8 @@ func (j *JJWorkspace) Cleanup() error {
 	// Delete the bookmark if we created it
 	if !j.isExistingBookmark {
 		if _, err := runJJCommandWithRetry(j.repoPath, "bookmark", "delete", j.bookmarkName, "--ignore-working-copy"); err != nil {
-			if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "Bookmark") {
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, "No such bookmark") && !strings.Contains(errMsg, "not found") {
 				errs = append(errs, fmt.Errorf("failed to delete bookmark %s: %w", j.bookmarkName, err))
 			}
 		}

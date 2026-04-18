@@ -16,9 +16,13 @@ const maxRetries = 3
 func sanitizeBookmarkName(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
+	// Replace slashes before the regex pass. A slash in a bookmark name produces a
+	// workspace path like worktrees/feature/foo where the intermediate directory
+	// worktrees/feature/ is never created, causing `jj workspace add` to fail.
+	s = strings.ReplaceAll(s, "/", "-")
 
-	// Remove characters not in our safe subset: letters, digits, dash, underscore, slash, dot
-	re := regexp.MustCompile(`[^a-z0-9\-_/.]+`)
+	// Remove characters not in our safe subset: letters, digits, dash, underscore, dot
+	re := regexp.MustCompile(`[^a-z0-9\-_.]+`)
 	s = re.ReplaceAllString(s, "")
 
 	// Replace ".." sequences (forbidden in jj bookmarks)
@@ -63,7 +67,8 @@ func runJJCommand(path string, args ...string) (string, error) {
 	return string(output), nil
 }
 
-// runJJCommandWithRetry executes a jj command with retry-and-backoff for lock contention.
+// runJJCommandWithRetry executes a jj command with retry-and-backoff for lock contention
+// and automatic recovery for stale working copies.
 // Use this for mutating commands (describe, new, bookmark set, workspace forget).
 func runJJCommandWithRetry(path string, args ...string) (string, error) {
 	var lastErr error
@@ -71,6 +76,14 @@ func runJJCommandWithRetry(path string, args ...string) (string, error) {
 		output, err := runJJCommand(path, args...)
 		if err == nil {
 			return output, nil
+		}
+		if isStaleError(err) {
+			// Heal the stale working copy, then retry immediately.
+			if _, fixErr := runJJCommand(path, "workspace", "update-stale"); fixErr != nil {
+				return "", fmt.Errorf("failed to update stale workspace: %w", fixErr)
+			}
+			lastErr = err
+			continue
 		}
 		if !isLockError(err) {
 			return "", err
@@ -86,6 +99,12 @@ func isLockError(err error) bool {
 	return strings.Contains(msg, "FileLock") ||
 		strings.Contains(msg, "concurrent operation") ||
 		strings.Contains(msg, "repo is locked")
+}
+
+func isStaleError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "working copy is stale") ||
+		strings.Contains(msg, "workspace update-stale")
 }
 
 func retryBackoff(attempt int) time.Duration {

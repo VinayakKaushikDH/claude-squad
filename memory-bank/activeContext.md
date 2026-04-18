@@ -2,6 +2,8 @@
 
 ## Current Focus
 
+**jj workspace robustness sweep (2026-04-18)**: 8 bugs found and fixed in `session/jj/` — stale diff display, slash in bookmark names, runJJCommand vs retry for base change ID, CommitChanges bookmark orphan, CleanupWorkspaces missing workspace forget, overly broad bookmark error suppression, CheckoutInMainRepo missing main-repo heal. New `SyncFromMainRepo()` operation implemented — called on Enter (attach) to sync user edits from the main repo into the agent workspace before it resumes.
+
 **Post-Phase-6 TUI attach/detach fixes**: four bugs fixed in `session/tmux/tmux.go` related to pi/opencode compatibility and notification correctness:
 
 ## Recent Changes (from git log)
@@ -15,6 +17,7 @@
 - Phase 6 bug fixes: blink persists after Enter (render never checked flag), ctrl+q slow (key went through 2-pass menu highlighting), workspace quit guard, cross-instance kill overwrote disk with stale cache (`DeleteInstanceByTitle` atomic fix), window shrinks 2s (tmux resize caching via `lastCols`/`lastRows`)
 - Phase 5: disk reload (`mergeReloadedInstances`, `ReloadAndParse`), `ReadyAcknowledged` + blink UI, workspace fixes, tmux resize polling
 - Phase 4: multi-workspace tabs (`[`/`]` keys), filtered list view, OS notifications (macOS/Linux), green tab highlight for Ready workspaces
+- jj workspace robustness sweep: 8 bugs fixed, `SyncFromMainRepo()` added (entry point: Enter key syncs user edits from main repo into agent workspace before attach)
 - JJ checkout feature: `CheckoutInMainRepo()` + `ErrCheckoutRequiresPause` sentinel, jj snapshots + edits in place
 - Phase 2 implementation: `session/jj/` package (6 files), `session/vcs/detect.go`, storage/instance/main/app wiring
 

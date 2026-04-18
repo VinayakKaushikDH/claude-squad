@@ -32,10 +32,24 @@
 - **ctrl+q bypass** (Phase 6): `KeyQuit` skips `handleMenuHighlighting`'s 2-pass re-send to avoid doubled quit latency
 - **Tmux resize caching** (Phase 6): `TmuxSession.lastCols`/`lastRows` fields skip redundant resize calls; cache invalidated by `SetDetachedSize`
 
+- **jj workspace robustness (2026-04-18)**: 8 bugs fixed across `session/jj/`:
+  - `diff.go`: `Diff()` now snapshots WC with `jj status` before `jj diff --ignore-working-copy` — eliminates stale diff panel
+  - `util.go`: `sanitizeBookmarkName` replaces `/` with `-` — prevents broken workspace paths with intermediate directories
+  - `workspace_ops.go`: `jj log -r @-` (baseChangeID capture) now uses `runJJCommandWithRetry` in both `setupNewWorkspace` and `setupFromExistingBookmark`
+  - `workspace_ops.go`: bookmark deletion error check changed from broad `"Bookmark"` to targeted `"No such bookmark"`
+  - `workspace_jj.go`: `CommitChanges` sets bookmark to `@` BEFORE `jj new` (was after, causing orphan on failure)
+  - `workspace_jj.go`: `CheckoutInMainRepo` now heals main repo staleness before `jj edit` — was the primary source of user-reported stale errors
+  - `workspace_jj.go`: `update-stale` errors in `CheckoutInMainRepo` now logged instead of silently discarded
+  - `refs.go`: `CleanupWorkspaces` now calls `jj workspace forget` for each workspace before deleting its directory
+- **`SyncFromMainRepo()` (2026-04-18)**: new operation in `session/jj/workspace_jj.go` and `session/instance.go`. Called on Enter (attach) in `app/app.go`. Snapshots user edits from main repo into the checked-out commit, then `workspace update-stale` in agent workspace — agent sees user's amendments without any new commit being created. 1 integration test added (`TestSyncFromMainRepo`).
+
 ## Known Issues
 
 - **Idle prompt strings for pi-mono and opencode** are placeholders (`">"`); real idle prompt text not yet confirmed. Until fixed, `HasUpdated()` may not correctly detect when these agents are idle.
 - Orphaned instances with dead tmux sessions cause `capture-pane` exit-status-1 errors every ~500ms. Workaround: `cs reset`. Permanent fix: `TmuxAlive()` guard in `snapshotActiveInstances`.
+- **Session name collision**: if two sessions produce the same sanitized bookmark name, `setupNewWorkspace` will call `workspace forget` + `os.RemoveAll` on the first session's directory while it is still running. No collision detection exists yet.
+- **Workspace directory not verified on restore**: `FromInstanceData()` → `Start(false)` does not check that the workspace directory exists on disk. If the directory was deleted externally, all subsequent metadata ops fail silently.
+- **Fragile stale error detection**: `isStaleError()` matches on literal substrings `"working copy is stale"` and `"workspace update-stale"`. If jj changes wording across versions, stale recovery silently breaks.
 
 ## Remaining Work / Planned
 

@@ -302,6 +302,12 @@ func TestDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Diff() now snapshots the WC internally before running jj diff, so calling
+	// IsDirty() here is redundant — kept to verify IsDirty() still works correctly.
+	if _, err := ws.IsDirty(); err != nil {
+		t.Fatalf("IsDirty after add failed: %v", err)
+	}
+
 	// Diff should show additions
 	stats = ws.Diff()
 	if stats.Error != nil {
@@ -318,6 +324,11 @@ func TestDiff(t *testing.T) {
 	readmePath := filepath.Join(ws.GetWorktreePath(), "README.md")
 	if err := os.WriteFile(readmePath, []byte("# Modified\nNew line\n"), 0644); err != nil {
 		t.Fatal(err)
+	}
+
+	// IsDirty() here is redundant (Diff() snapshots internally) but kept for correctness verification.
+	if _, err := ws.IsDirty(); err != nil {
+		t.Fatalf("IsDirty after modify failed: %v", err)
 	}
 
 	stats = ws.Diff()
@@ -520,6 +531,69 @@ func TestCheckoutInMainRepo_BookmarkPointsToCurrentChange(t *testing.T) {
 	if bookmarkChangeID != wcChangeID {
 		t.Errorf("bookmark points to change %s, but workspace @ is %s — bookmark should be on @",
 			bookmarkChangeID, wcChangeID)
+	}
+}
+
+// TestSyncFromMainRepo verifies the entry-point flow:
+// 1. Checkout puts both workspaces at the same commit.
+// 2. User edits a file in the main repo (amending the commit in place).
+// 3. SyncFromMainRepo snapshots the main repo and updates the agent workspace.
+// 4. The agent workspace filesystem now reflects the user's edits.
+// 5. Neither workspace is left stale.
+func TestSyncFromMainRepo(t *testing.T) {
+	if !jjAvailable() {
+		t.Skip("jj not installed")
+	}
+
+	repoDir, cleanup := setupTestJJRepo(t)
+	defer cleanup()
+
+	ws, _, err := NewJJWorkspace(repoDir, "sync-test")
+	if err != nil {
+		t.Fatalf("NewJJWorkspace failed: %v", err)
+	}
+	if err := ws.Setup(); err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer ws.Cleanup()
+
+	// Write a file in agent workspace and checkout to main repo.
+	agentFile := filepath.Join(ws.GetWorktreePath(), "agent.txt")
+	if err := os.WriteFile(agentFile, []byte("agent initial\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.CheckoutInMainRepo(); err != nil {
+		t.Fatalf("CheckoutInMainRepo() = %v", err)
+	}
+
+	// Both workspaces are now at the same commit. The main repo has agent.txt.
+	mainAgentFile := filepath.Join(repoDir, "agent.txt")
+	if _, err := os.Stat(mainAgentFile); os.IsNotExist(err) {
+		t.Fatal("agent.txt should be visible in main repo after checkout")
+	}
+
+	// User edits the file in the main repo (amending the commit in place).
+	if err := os.WriteFile(mainAgentFile, []byte("agent initial\nuser edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// SyncFromMainRepo: snapshot main repo → update-stale agent workspace.
+	if err := ws.SyncFromMainRepo(); err != nil {
+		t.Fatalf("SyncFromMainRepo() = %v", err)
+	}
+
+	// Agent workspace filesystem should now reflect the user's edit.
+	content, err := os.ReadFile(agentFile)
+	if err != nil {
+		t.Fatalf("failed to read agent.txt in agent workspace: %v", err)
+	}
+	if !strings.Contains(string(content), "user edit") {
+		t.Errorf("agent workspace should contain user's edit after SyncFromMainRepo, got: %q", content)
+	}
+
+	// Agent workspace should not be stale — IsDirty should succeed.
+	if _, err := ws.IsDirty(); err != nil {
+		t.Errorf("IsDirty after SyncFromMainRepo should not error (stale?): %v", err)
 	}
 }
 

@@ -37,6 +37,14 @@
   - After `jj edit`, `jj status` always shows "Working copy changes:" (normal behavior — the working copy IS the checked-out change). Do not use a dirty-state guard before `jj edit`; it will always fire and block checkout.
   - When snapshotting an agent workspace before checkout, use describe + move bookmark to `@` (do NOT call `jj new`). Calling `jj new` advances the agent one empty commit ahead, leaving the bookmark behind.
   - Do not prepend `BranchPrefix` (e.g. `username/`) to jj bookmark names and do not append hex timestamp suffixes to workspace directory names — both cause bookmark-not-found errors and confuse users. Use the sanitized session title directly.
+  - `jj diff --ignore-working-copy` reads from the last snapshot, not the live filesystem. Always run `jj status` first (without `--ignore-working-copy`) to force a snapshot before diffing, or the diff panel will show stale data.
+  - A workspace becomes stale whenever any other workspace in the same repo advances the op log. `--ignore-working-copy` only prevents the current workspace from snapshotting (and thereby staling others) — it does NOT prevent receiving staleness from others. Always `workspace update-stale` before WC-touching operations like `jj edit`.
+  - `jj bookmark list <name>` exits 0 even when the bookmark does not exist, and prints "No such bookmark" in the error text (not a warning line). The targeted error check is `strings.Contains(err, "No such bookmark")` — do NOT use `strings.Contains(err, "Bookmark")` (too broad, hides real errors).
+  - `sanitizeBookmarkName` must replace `/` with `-` before the regex pass. A slash produces workspace paths like `worktrees/feature/foo` where the intermediate `worktrees/feature/` directory is never created, causing `jj workspace add` to fail silently.
+  - In `CommitChanges`, set the bookmark to `@` BEFORE calling `jj new`. If set after using `@-` and `jj new` fails, the bookmark is permanently orphaned — `IsDirty()` returns false on the new empty WC so a retry is a no-op.
+  - `CleanupWorkspaces` (used by `cs reset`) must call `jj workspace forget` for each workspace directory before deleting it. Skipping this leaves stale workspace registrations in the op log that cause "working copy is stale" errors on every subsequent `jj log`/`jj status`.
+  - `runJJCommandWithRetry` should be used for the `jj log -r @-` calls that capture `baseChangeID` in `setupNewWorkspace` and `setupFromExistingBookmark`. Using `runJJCommand` (no retry) on a read-only query is fine in low-contention cases but causes unnecessary workspace destruction on first lock contention.
+  - `jj status` (without `--ignore-working-copy`) run with `cmd.Dir` in the main repo is the correct way to snapshot user file edits before syncing to the agent workspace. Do not use `--repository` for this — it may not snapshot the right workspace.
 
 ## Configuration
 
