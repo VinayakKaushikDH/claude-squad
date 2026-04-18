@@ -438,23 +438,32 @@ func TestSyncWorkspaceUI_HasReadyClears(t *testing.T) {
 // --- ReadyAcknowledged tests ---
 
 func TestSyncWorkspaceUI_HasReadyGatedOnAcknowledged(t *testing.T) {
-	inst := makeInstance("/path/a", session.Ready)
-	h := newTestHome([]*session.Instance{inst})
+	// Use two workspaces so we can test HasReady on the non-active one.
+	instA := makeInstance("/path/a", session.Running)
+	instB := makeInstance("/path/b", session.Ready)
+	h := newTestHome([]*session.Instance{instA, instB})
 
-	// Before acknowledgment: HasReady should be true.
+	// Active workspace is /path/a (index 0 after sort).
 	h.syncWorkspaceUI()
-	require.Len(t, h.workspaces, 1)
-	assert.True(t, h.workspaces[0].HasReady, "unacknowledged Ready instance should set HasReady")
+	require.Len(t, h.workspaces, 2)
+	h.activeWorkspace = FindWorkspaceIndex(h.workspaces, "/path/a")
+
+	// Before acknowledgment: /path/b HasReady should be true (not active, unacknowledged).
+	h.syncWorkspaceUI()
+	bIdx := FindWorkspaceIndex(h.workspaces, "/path/b")
+	assert.True(t, h.workspaces[bIdx].HasReady, "unacknowledged Ready instance should set HasReady")
 
 	// After acknowledgment: HasReady should be false.
-	inst.ReadyAcknowledged = true
+	instB.ReadyAcknowledged = true
 	h.syncWorkspaceUI()
-	assert.False(t, h.workspaces[0].HasReady, "acknowledged Ready instance should NOT set HasReady")
+	bIdx = FindWorkspaceIndex(h.workspaces, "/path/b")
+	assert.False(t, h.workspaces[bIdx].HasReady, "acknowledged Ready instance should NOT set HasReady")
 
 	// Reset acknowledgment: HasReady should return to true.
-	inst.ReadyAcknowledged = false
+	instB.ReadyAcknowledged = false
 	h.syncWorkspaceUI()
-	assert.True(t, h.workspaces[0].HasReady, "un-acknowledged Ready instance should set HasReady again")
+	bIdx = FindWorkspaceIndex(h.workspaces, "/path/b")
+	assert.True(t, h.workspaces[bIdx].HasReady, "un-acknowledged Ready instance should set HasReady again")
 }
 
 func TestMetadataUpdate_NotificationSuppressedWhenViewingWorkspace(t *testing.T) {
@@ -499,42 +508,39 @@ func TestMetadataUpdate_NotificationSuppressedWhenViewingWorkspace(t *testing.T)
 	assert.True(t, instB.NotifiedReady, "notification SHOULD fire for non-viewed workspace")
 }
 
-func TestAcknowledgeOnWorkspaceSwitch(t *testing.T) {
+func TestWorkspaceSwitch_BadgeSuppressedForActiveWorkspace(t *testing.T) {
 	instA := makeInstance("/path/a", session.Running)
 	instB := makeInstance("/path/b", session.Ready)
 	h := newTestHome([]*session.Instance{instA, instB})
 	h.tabbedWindow = ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
+	// Start on workspace /path/a.
 	h.syncWorkspaceUI()
 	require.Len(t, h.workspaces, 2)
-
-	// Start on workspace /path/a.
 	h.activeWorkspace = FindWorkspaceIndex(h.workspaces, "/path/a")
 	h.list.SetFilter("/path/a")
 
-	// Verify /path/b has HasReady before switch.
+	// /path/b has HasReady because it's not active and has unacknowledged Ready.
+	h.syncWorkspaceUI()
 	var wsB *Workspace
 	for i := range h.workspaces {
 		if h.workspaces[i].Path == "/path/b" {
 			wsB = &h.workspaces[i]
 		}
 	}
-	require.True(t, wsB.HasReady, "/path/b should have HasReady before switch")
-	assert.False(t, instB.ReadyAcknowledged, "instB should not be acknowledged yet")
+	require.True(t, wsB.HasReady, "/path/b should have HasReady when not active")
+	assert.False(t, instB.ReadyAcknowledged, "instB should NOT be acknowledged by switching")
 
-	// Switch to workspace /path/b.
+	// Switch to workspace /path/b — badge suppressed because it's now active.
 	h.activeWorkspace = FindWorkspaceIndex(h.workspaces, "/path/b")
 	h.list.SetFilter("/path/b")
-	h.acknowledgeVisibleReady()
+	h.syncWorkspaceUI()
 
-	// instB should now be acknowledged.
-	assert.True(t, instB.ReadyAcknowledged, "instB should be acknowledged after switching to its workspace")
-
-	// HasReady should be false after re-sync.
 	for i := range h.workspaces {
 		if h.workspaces[i].Path == "/path/b" {
 			wsB = &h.workspaces[i]
 		}
 	}
-	assert.False(t, wsB.HasReady, "HasReady should clear after acknowledging visible Ready instances")
+	assert.False(t, wsB.HasReady, "HasReady should be suppressed for the active workspace")
+	assert.False(t, instB.ReadyAcknowledged, "instB should still NOT be acknowledged — only Enter does that")
 }

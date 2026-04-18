@@ -82,6 +82,21 @@ The `ui` package must not import `app` — circular dependency. UI types that mi
 
 `NotifiedReady` on `Instance` must only be reset on user-initiated actions (`SendPrompt()`), never on automated metadata poll callbacks (`r.updated` branch). Resetting on tmux output fluctuations causes Running→Ready→Running→Ready cycles that spam notifications.
 
+### 9. Notification Acknowledgment Model (Phase 6)
+
+Tab badge and individual agent blink/dot are controlled by **two separate mechanisms** — do not collapse them into one:
+
+| Signal | Controls | Set when | Cleared when |
+|--------|----------|----------|--------------|
+| `ReadyAcknowledged` (persisted in `InstanceData`) | Agent icon blink + green dot | Enter pressed on agent; OR agent becomes Ready while user is already in that workspace (auto-ack) | Agent resumes (goes back to Running) |
+| `activeWorkspacePath` param in `DeriveWorkspaces` | Tab badge (`HasReady`) suppressed for the active tab | Derived from current `m.workspaces[m.activeWorkspace]` | N/A — always computed fresh |
+
+`ReadyAcknowledged` is **persisted to disk** (field in `InstanceData` JSON) so cross-process acknowledgment propagates via the existing disk reload mechanism (~1 second). Workspace switching must NOT call `acknowledgeVisibleReady` or set `ReadyAcknowledged` — that was tried and rejected. Only Enter sets `ReadyAcknowledged`.
+
+`DeriveWorkspaces(instances []Instance, activeWorkspacePath string)` — the second parameter suppresses the `HasReady` badge for the workspace the user is currently viewing. Test callers pass `""` for no suppression.
+
+The disk reload counter threshold is 2 ticks (~1 second) not 10 (~5 seconds) — changed to make cross-process acknowledgment feel near-instant.
+
 ## Invariants
 
 - One tmux session per instance.

@@ -21,7 +21,9 @@ type InstanceData struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	AutoYes   bool      `json:"auto_yes"`
 
-	Program   string          `json:"program"`
+	ReadyAcknowledged bool `json:"ready_acknowledged,omitempty"`
+
+	Program string `json:"program"`
 	VCSType   string          `json:"vcs_type"`
 	Worktree  json.RawMessage `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
@@ -86,6 +88,23 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 	return s.state.SaveInstances(jsonData)
 }
 
+// SaveInstancesNonBlocking saves instances without blocking if the lock is held.
+func (s *Storage) SaveInstancesNonBlocking(instances []*Instance) error {
+	data := make([]InstanceData, 0)
+	for _, instance := range instances {
+		if instance.Started() {
+			data = append(data, instance.ToInstanceData())
+		}
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal instances: %w", err)
+	}
+
+	return s.state.SaveInstancesNonBlocking(jsonData)
+}
+
 // LoadInstances loads the list of instances from disk
 func (s *Storage) LoadInstances() ([]*Instance, error) {
 	jsonData := s.state.GetInstances()
@@ -108,29 +127,10 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 	return instances, nil
 }
 
-// DeleteInstance removes an instance from storage
+// DeleteInstance atomically removes an instance from disk storage.
+// Uses atomic read-modify-write so other processes' instances are preserved.
 func (s *Storage) DeleteInstance(title string) error {
-	instances, err := s.LoadInstances()
-	if err != nil {
-		return fmt.Errorf("failed to load instances: %w", err)
-	}
-
-	found := false
-	newInstances := make([]*Instance, 0)
-	for _, instance := range instances {
-		data := instance.ToInstanceData()
-		if data.Title != title {
-			newInstances = append(newInstances, instance)
-		} else {
-			found = true
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("instance not found: %s", title)
-	}
-
-	return s.SaveInstances(newInstances)
+	return s.state.DeleteInstanceByTitle(title)
 }
 
 // UpdateInstance updates an existing instance in storage

@@ -77,7 +77,8 @@ type Instance struct {
 	NotifiedReady bool
 
 	// ReadyAcknowledged tracks whether the user has "seen" this instance's Ready
-	// state by switching to its workspace or selecting it. Runtime-only, not persisted.
+	// state by pressing Enter or by being in the workspace when it became Ready.
+	// Persisted to disk for cross-process sync.
 	ReadyAcknowledged bool
 
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
@@ -105,7 +106,8 @@ func (i *Instance) ToInstanceData() InstanceData {
 		CreatedAt: i.CreatedAt,
 		UpdatedAt: time.Now(),
 		Program:   i.Program,
-		AutoYes:   i.AutoYes,
+		AutoYes:           i.AutoYes,
+		ReadyAcknowledged: i.ReadyAcknowledged,
 	}
 
 	// Only include worktree data if workspace is initialized
@@ -165,7 +167,8 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		Width:     data.Width,
 		CreatedAt: data.CreatedAt,
 		UpdatedAt: data.UpdatedAt,
-		Program:   data.Program,
+		Program:           data.Program,
+		ReadyAcknowledged: data.ReadyAcknowledged,
 		diffStats: &vcs.DiffStats{
 			Added:   data.DiffStats.Added,
 			Removed: data.DiffStats.Removed,

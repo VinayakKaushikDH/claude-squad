@@ -2,16 +2,18 @@
 
 ## Current Focus
 
-**Phase 3 + Phase 4 complete**: jj checkout feature (with integration tests) and multi-workspace tabs/notifications both committed. Ready to push.
+**Phase 6 complete**: multi-instance bug fixes and notification system overhaul committed. Ready to push.
 
 ## Recent Changes (from git log)
 
+- Phase 6: notification system redesign — `ReadyAcknowledged` persisted, auto-ack when in workspace, separate tab badge / blink control, 1s disk reload
+- Phase 6 bug fixes: blink persists after Enter (render never checked flag), ctrl+q slow (key went through 2-pass menu highlighting), workspace quit guard, cross-instance kill overwrote disk with stale cache (`DeleteInstanceByTitle` atomic fix), window shrinks 2s (tmux resize caching via `lastCols`/`lastRows`)
+- Phase 5: disk reload (`mergeReloadedInstances`, `ReloadAndParse`), `ReadyAcknowledged` + blink UI, workspace fixes, tmux resize polling
 - Phase 4: multi-workspace tabs (`[`/`]` keys), filtered list view, OS notifications (macOS/Linux), green tab highlight for Ready workspaces
-- Phase 4 bug fixes: notification spam fix (reset `NotifiedReady` only in `SendPrompt`, not on `r.updated`); workspace path fix (new instances always use `currentRepoPath`, not active tab path)
 - JJ checkout feature: `CheckoutInMainRepo()` + `ErrCheckoutRequiresPause` sentinel, jj snapshots + edits in place
 - Phase 2 implementation: `session/jj/` package (6 files), `session/vcs/detect.go`, storage/instance/main/app wiring
 
-Current version: **1.0.17** (Phase 4 change committed, not yet pushed)
+Current version: **1.0.17** (Phase 6 changes committed, not yet pushed)
 
 ## Active Decisions
 
@@ -63,9 +65,10 @@ Current version: **1.0.17** (Phase 4 change committed, not yet pushed)
 
 ## Next Steps
 
-- Push Phase 4 change (`jj git push`)
+- Push Phase 6 commits (`jj git push`)
 - Consider adding `TmuxAlive()` guard in `snapshotActiveInstances` to skip dead instances and prevent error-flood / false-Ready status on orphaned sessions
 - Consider jj error message normalization for the TUI (noted for future; currently raw passthrough)
+- `SaveInstances` (bulk save) still uses the old stale-cache pattern; only `DeleteInstanceByTitle` is atomic. Low-priority since deletes are the main conflict path.
 
 ## Open Questions
 

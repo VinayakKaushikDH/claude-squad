@@ -48,14 +48,6 @@ var selectedDescStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#dde4f0")).
 	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#1a1a1a"})
 
-var mainTitle = lipgloss.NewStyle().
-	Background(lipgloss.Color("62")).
-	Foreground(lipgloss.Color("230"))
-
-var autoYesStyle = lipgloss.NewStyle().
-	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.Color("#1a1a1a"))
-
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int // Index into filteredIdxs (visible selection)
@@ -204,7 +196,10 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	case session.Running, session.Loading:
 		join = fmt.Sprintf("%s ", r.spinner.View())
 	case session.Ready:
-		if blinkOn {
+		if i.ReadyAcknowledged {
+			// Already viewed — pad to match icon width so background extends.
+			join = "  "
+		} else if blinkOn {
 			join = readyStyle.Render(readyIcon)
 		} else {
 			join = dimReadyStyle.Render(readyIcon)
@@ -302,30 +297,18 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 }
 
 func (l *List) String() string {
-	const titleText = " Instances "
-	const autoYesText = " auto-yes "
-
-	// Write the title.
 	var b strings.Builder
 	b.WriteString("\n")
-	b.WriteString("\n")
 
-	// Write title line
-	// add padding of 2 because the border on list items adds some extra characters
-	titleWidth := AdjustPreviewWidth(l.width) + 2
-	if !l.autoyes {
+	if l.autoyes {
+		titleWidth := AdjustPreviewWidth(l.width) + 2
+		autoYesStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("#dde4f0")).
+			Foreground(lipgloss.Color("#1a1a1a"))
 		b.WriteString(lipgloss.Place(
-			titleWidth, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText)))
-	} else {
-		title := lipgloss.Place(
-			titleWidth/2, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText))
-		autoYes := lipgloss.Place(
-			titleWidth-(titleWidth/2), 1, lipgloss.Right, lipgloss.Bottom, autoYesStyle.Render(autoYesText))
-		b.WriteString(lipgloss.JoinHorizontal(
-			lipgloss.Top, title, autoYes))
+			titleWidth, 1, lipgloss.Right, lipgloss.Bottom, autoYesStyle.Render(" auto-yes ")))
 	}
 
-	b.WriteString("\n")
 	b.WriteString("\n")
 
 	// Render only visible (filtered) instances.

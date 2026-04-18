@@ -191,7 +191,11 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 }
 
 func (m *home) refreshWorkspaces() {
-	m.workspaces = DeriveWorkspaces(m.list.GetInstances())
+	activePath := ""
+	if m.activeWorkspace < len(m.workspaces) {
+		activePath = m.workspaces[m.activeWorkspace].Path
+	}
+	m.workspaces = DeriveWorkspaces(m.list.GetInstances(), activePath)
 	// Ensure the current working directory always has a workspace entry,
 	// even when no instances exist for it yet. This prevents a second cs
 	// process from defaulting to showing another process's workspace.
@@ -466,7 +470,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Check if user is currently viewing this instance's workspace.
 				isViewingWorkspace := m.activeWorkspace < len(m.workspaces) &&
 					m.workspaces[m.activeWorkspace].Path == r.instance.Path
-				if isViewingWorkspace {
+				// Auto-acknowledge only on the actual Running→Ready transition,
+				// not on every tick while already Ready in the viewed workspace.
+				if isViewingWorkspace && prevStatus == session.Running {
 					r.instance.ReadyAcknowledged = true
 				}
 				// Fire notification on Running -> Ready transition (only if not viewing).
@@ -500,9 +506,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh workspace HasReady flags and tab bar.
 		m.syncWorkspaceUI()
 
-		// Trigger periodic disk reload every 10 ticks (~5 seconds).
+		// Trigger periodic disk reload every 2 ticks (~1 second).
 		m.reloadTickCounter++
-		if m.reloadTickCounter >= 10 {
+		if m.reloadTickCounter >= 2 {
 			m.reloadTickCounter = 0
 			storage := m.storage
 			notifyCmds = append(notifyCmds, func() tea.Msg {
@@ -611,8 +617,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
-	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-		return m, m.handleError(err)
+	// Guard: only allow quitting from the workspace cs was launched in.
+	if m.currentRepoPath != "" && m.activeWorkspace < len(m.workspaces) &&
+		m.workspaces[m.activeWorkspace].Path != m.currentRepoPath {
+		return m, m.handleError(fmt.Errorf("switch to workspace %q before quitting",
+			filepath.Base(m.currentRepoPath)))
+	}
+	if err := m.storage.SaveInstancesNonBlocking(m.list.GetInstances()); err != nil {
+		log.WarningLog.Printf("quit: skipping save (lock busy): %v", err)
 	}
 	return m, tea.Quit
 }
@@ -636,7 +648,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 	if m.list.GetSelectedInstance() != nil && m.list.GetSelectedInstance().Paused() && name == keys.KeyEnter {
 		return nil, false
 	}
-	if name == keys.KeyShiftDown || name == keys.KeyShiftUp {
+	if name == keys.KeyShiftDown || name == keys.KeyShiftUp || name == keys.KeyQuit {
 		return nil, false
 	}
 
@@ -935,11 +947,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case keys.KeyUp:
 		m.list.Up()
-		m.acknowledgeSelectedReady()
 		return m, m.instanceChanged()
 	case keys.KeyDown:
 		m.list.Down()
-		m.acknowledgeSelectedReady()
 		return m, m.instanceChanged()
 	case keys.KeyShiftUp:
 		m.tabbedWindow.ScrollUp()
@@ -1039,7 +1049,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
 		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
-		m.acknowledgeVisibleReady()
 		return m, m.instanceChanged()
 	case keys.KeyNextWorkspace:
 		if len(m.workspaces) < 2 {
@@ -1051,7 +1060,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
 		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
-		m.acknowledgeVisibleReady()
 		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
@@ -1071,6 +1079,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
 			return m, nil
 		}
+		// Acknowledge immediately so blink/badge clears on enter, not on detach.
+		selected.ReadyAcknowledged = true
+		m.syncWorkspaceUI()
 		// Terminal tab: attach to terminal session
 		if m.tabbedWindow.IsInTerminalTab() {
 			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
@@ -1126,23 +1137,7 @@ func (m *home) instanceChanged() tea.Cmd {
 	return nil
 }
 
-// acknowledgeVisibleReady marks all Ready instances in the current workspace as acknowledged.
-func (m *home) acknowledgeVisibleReady() {
-	for _, inst := range m.list.GetVisibleInstances() {
-		if inst.Status == session.Ready {
-			inst.ReadyAcknowledged = true
-		}
-	}
-	m.syncWorkspaceUI()
-}
 
-// acknowledgeSelectedReady marks the currently selected instance as acknowledged if Ready.
-func (m *home) acknowledgeSelectedReady() {
-	if selected := m.list.GetSelectedInstance(); selected != nil && selected.Status == session.Ready {
-		selected.ReadyAcknowledged = true
-		m.syncWorkspaceUI()
-	}
-}
 
 type keyupMsg struct{}
 

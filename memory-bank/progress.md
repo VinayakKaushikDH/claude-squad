@@ -1,6 +1,6 @@
 # Progress
 
-## What Works (as of 2026-04-18, v1.0.17)
+## What Works (as of 2026-04-18, v1.0.17+)
 
 - Full TUI session management: create, kill, attach, detach
 - Git worktree isolation per session
@@ -21,6 +21,12 @@
 - **Integration tests for jj checkout** (`session/jj/workspace_test.go`): 6 real-jj-repo tests covering dirty workspace snapshot, false dirty-guard regression, bookmark placement, agent-continues post-checkout, and no random names
 - **Multi-workspace tabs** (Phase 4): `[`/`]` keys switch between workspaces derived from launch directory; filtered instance list per tab; green tab highlight for workspaces with Ready agents
 - **OS notifications** (Phase 4): macOS (osascript) and Linux (notify-send) alerts on Running→Ready transition; dedup via `NotifiedReady` flag; configurable via `"notifications"` in config.json
+- **Notification acknowledgment system** (Phase 6): `ReadyAcknowledged` persisted in `InstanceData` JSON for cross-process sync; auto-acknowledged when agent becomes Ready while user is in that workspace; tab badge suppressed for active workspace via `DeriveWorkspaces(instances, activeWorkspacePath)`; acknowledged agent shows no icon (dot removed entirely); blink stops only on Enter (not on Up/Down navigation or workspace switch)
+- **Atomic delete** (Phase 6): `DeleteInstanceByTitle` in `config/state.go` does read-modify-write under single flock, preventing stale-cache overwrite when multiple `cs` processes coexist
+- **Workspace quit guard** (Phase 6): `handleQuit` blocks if active workspace path differs from launch path (`currentRepoPath`)
+- **Non-blocking quit save** (Phase 6): `SaveInstancesNonBlocking` uses `LOCK_EX|LOCK_NB`; quit skips save if lock busy rather than blocking
+- **ctrl+q bypass** (Phase 6): `KeyQuit` skips `handleMenuHighlighting`'s 2-pass re-send to avoid doubled quit latency
+- **Tmux resize caching** (Phase 6): `TmuxSession.lastCols`/`lastRows` fields skip redundant resize calls; cache invalidated by `SetDetachedSize`
 
 ## Known Issues
 
@@ -44,6 +50,7 @@ Remaining polish:
 
 | Version | Change |
 |---------|--------|
+| 1.0.17  | Phase 6: notification ack system (persisted ReadyAcknowledged, auto-ack, active-tab badge suppression, dot removed on ack, Enter-only); atomic delete; workspace quit guard; non-blocking quit save; ctrl+q bypass; tmux resize caching |
 | 1.0.17  | Phase 4: multi-workspace tabs (`[`/`]`), filtered list, OS notifications, green Ready highlight; bug fixes for notification spam + workspace path |
 | 1.0.17  | jj checkout tests: 6 integration tests (real jj repos) + 4 unit tests; mock `checkoutErr` made configurable |
 | 1.0.17  | jj checkout: `c` key checks out bookmark via `jj edit` without pausing agent; git unchanged |

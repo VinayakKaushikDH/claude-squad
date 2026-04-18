@@ -16,7 +16,9 @@ type Workspace struct {
 // DeriveWorkspaces groups instances by repo path and returns sorted workspaces.
 // When two workspaces share the same basename, the parent directory name is prepended
 // to disambiguate (e.g., "work/api" and "personal/api").
-func DeriveWorkspaces(instances []*session.Instance) []Workspace {
+// activeWorkspacePath is the path of the currently active workspace tab; its badge
+// is suppressed since the user is already looking at it.
+func DeriveWorkspaces(instances []*session.Instance, activeWorkspacePath string) []Workspace {
 	if len(instances) == 0 {
 		return []Workspace{}
 	}
@@ -37,7 +39,7 @@ func DeriveWorkspaces(instances []*session.Instance) []Workspace {
 			seen[p] = &entry{path: p}
 			paths = append(paths, p)
 		}
-		if inst.Status == session.Ready && !inst.ReadyAcknowledged {
+		if inst.Status == session.Ready && !inst.ReadyAcknowledged && p != activeWorkspacePath {
 			seen[p].hasReady = true
 		}
 	}

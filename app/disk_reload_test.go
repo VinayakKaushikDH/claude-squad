@@ -185,15 +185,13 @@ func TestDiskReload_ReloadTickCounter(t *testing.T) {
 	th := newTestHarness(t, nil)
 	th.h.locallyDeleted = make(map[string]bool)
 
-	// Simulate 9 ticks — no reload should trigger.
-	for i := 0; i < 9; i++ {
-		th.SimulateMetadataTick(nil)
-	}
-	assert.Equal(t, 9, th.h.reloadTickCounter, "counter should be 9 after 9 ticks")
-
-	// 10th tick should reset counter to 0.
+	// Simulate 1 tick — no reload should trigger yet.
 	th.SimulateMetadataTick(nil)
-	assert.Equal(t, 0, th.h.reloadTickCounter, "counter should reset after 10 ticks")
+	assert.Equal(t, 1, th.h.reloadTickCounter, "counter should be 1 after 1 tick")
+
+	// 2nd tick should reset counter to 0 (reload triggers every 2 ticks).
+	th.SimulateMetadataTick(nil)
+	assert.Equal(t, 0, th.h.reloadTickCounter, "counter should reset after 2 ticks")
 }
 
 func TestTabBar_SingleWorkspace(t *testing.T) {

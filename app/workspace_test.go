@@ -17,12 +17,12 @@ func makeInstance(path string, status session.Status) *session.Instance {
 
 func TestDeriveWorkspaces(t *testing.T) {
 	t.Run("nil input returns empty slice", func(t *testing.T) {
-		result := DeriveWorkspaces(nil)
+		result := DeriveWorkspaces(nil, "")
 		assert.Equal(t, []Workspace{}, result)
 	})
 
 	t.Run("empty input returns empty slice", func(t *testing.T) {
-		result := DeriveWorkspaces([]*session.Instance{})
+		result := DeriveWorkspaces([]*session.Instance{}, "")
 		assert.Equal(t, []Workspace{}, result)
 	})
 
@@ -31,7 +31,7 @@ func TestDeriveWorkspaces(t *testing.T) {
 			makeInstance("/home/user/projects/api", session.Running),
 			makeInstance("/home/user/projects/api", session.Running),
 		}
-		result := DeriveWorkspaces(instances)
+		result := DeriveWorkspaces(instances, "")
 		assert.Len(t, result, 1)
 		assert.Equal(t, "api", result[0].Name)
 		assert.Equal(t, "/home/user/projects/api", result[0].Path)
@@ -43,7 +43,7 @@ func TestDeriveWorkspaces(t *testing.T) {
 			makeInstance("/home/user/projects/alpha", session.Running),
 			makeInstance("/home/user/projects/mango", session.Running),
 		}
-		result := DeriveWorkspaces(instances)
+		result := DeriveWorkspaces(instances, "")
 		assert.Len(t, result, 3)
 		assert.Equal(t, "alpha", result[0].Name)
 		assert.Equal(t, "mango", result[1].Name)
@@ -55,7 +55,7 @@ func TestDeriveWorkspaces(t *testing.T) {
 			makeInstance("/home/user/work/api", session.Running),
 			makeInstance("/home/user/personal/api", session.Running),
 		}
-		result := DeriveWorkspaces(instances)
+		result := DeriveWorkspaces(instances, "")
 		assert.Len(t, result, 2)
 		names := []string{result[0].Name, result[1].Name}
 		assert.Contains(t, names, "work/api")
@@ -68,7 +68,7 @@ func TestDeriveWorkspaces(t *testing.T) {
 			makeInstance("/home/user/projects/api", session.Ready),
 			makeInstance("/home/user/projects/api", session.Running),
 		}
-		result := DeriveWorkspaces(instances)
+		result := DeriveWorkspaces(instances, "")
 		assert.Len(t, result, 1)
 		assert.True(t, result[0].HasReady)
 	})
@@ -78,7 +78,7 @@ func TestDeriveWorkspaces(t *testing.T) {
 			makeInstance("/home/user/projects/api", session.Running),
 			makeInstance("/home/user/projects/api", session.Loading),
 		}
-		result := DeriveWorkspaces(instances)
+		result := DeriveWorkspaces(instances, "")
 		assert.Len(t, result, 1)
 		assert.False(t, result[0].HasReady)
 	})

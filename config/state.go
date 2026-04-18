@@ -18,10 +18,14 @@ const (
 type InstanceStorage interface {
 	// SaveInstances saves the raw instance data
 	SaveInstances(instancesJSON json.RawMessage) error
+	// SaveInstancesNonBlocking saves without blocking if the lock is held
+	SaveInstancesNonBlocking(instancesJSON json.RawMessage) error
 	// GetInstances returns the raw instance data
 	GetInstances() json.RawMessage
 	// ReloadInstances re-reads instance data from disk, bypassing cache
 	ReloadInstances() (json.RawMessage, error)
+	// DeleteInstanceByTitle atomically removes one instance from disk
+	DeleteInstanceByTitle(title string) error
 	// DeleteAllInstances removes all stored instances
 	DeleteAllInstances() error
 }
@@ -81,6 +85,40 @@ func withStateLock(fn func() error) error {
 	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 
 	return fn()
+}
+
+// withStateLockNonBlocking is like withStateLock but uses LOCK_NB so it
+// returns immediately with an error if the lock is already held.
+func withStateLockNonBlocking(fn func() error) error {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to get config directory: %w", err)
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	lockPath := filepath.Join(configDir, LockFileName)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return fmt.Errorf("lock busy: %w", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	return fn()
+}
+
+// SaveStateNonBlocking saves state without blocking if the lock is held.
+func SaveStateNonBlocking(state *State) error {
+	return withStateLockNonBlocking(func() error {
+		return saveStateUnlocked(state)
+	})
 }
 
 // LoadState loads the state from disk. If it cannot be done, we return the default state.
@@ -190,6 +228,12 @@ func (s *State) SaveInstances(instancesJSON json.RawMessage) error {
 	return SaveState(s)
 }
 
+// SaveInstancesNonBlocking saves instances without blocking if the lock is held.
+func (s *State) SaveInstancesNonBlocking(instancesJSON json.RawMessage) error {
+	s.InstancesData = instancesJSON
+	return SaveStateNonBlocking(s)
+}
+
 // GetInstances returns the cached raw instance data
 func (s *State) GetInstances() json.RawMessage {
 	return s.InstancesData
@@ -216,6 +260,55 @@ func (s *State) ReloadInstances() (json.RawMessage, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// DeleteInstanceByTitle atomically reloads from disk, removes the instance
+// with the given title, and saves — all under a single file lock so another
+// process's writes are not lost.
+func (s *State) DeleteInstanceByTitle(title string) error {
+	return withStateLock(func() error {
+		state, err := loadStateUnlocked()
+		if err != nil {
+			return err
+		}
+		if state == nil {
+			return fmt.Errorf("instance not found: %s", title)
+		}
+
+		// Parse as generic JSON objects to preserve all fields.
+		var items []json.RawMessage
+		if err := json.Unmarshal(state.InstancesData, &items); err != nil {
+			return fmt.Errorf("failed to parse instances: %w", err)
+		}
+
+		remaining := make([]json.RawMessage, 0, len(items))
+		found := false
+		for _, raw := range items {
+			var entry struct {
+				Title string `json:"title"`
+			}
+			if err := json.Unmarshal(raw, &entry); err != nil {
+				remaining = append(remaining, raw)
+				continue
+			}
+			if entry.Title == title {
+				found = true
+				continue
+			}
+			remaining = append(remaining, raw)
+		}
+		if !found {
+			return fmt.Errorf("instance not found: %s", title)
+		}
+
+		data, err := json.Marshal(remaining)
+		if err != nil {
+			return fmt.Errorf("failed to marshal instances: %w", err)
+		}
+		state.InstancesData = data
+		s.InstancesData = data
+		return saveStateUnlocked(state)
+	})
 }
 
 // DeleteAllInstances removes all stored instances

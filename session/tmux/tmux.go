@@ -55,6 +55,11 @@ type TmuxSession struct {
 	ctx    context.Context
 	cancel func()
 	wg     *sync.WaitGroup
+
+	// lastCols/lastRows cache the last-applied window size so redundant
+	// resize calls (from the periodic poll) can be skipped.
+	lastCols int
+	lastRows int
 }
 
 const TmuxPrefix = "claudesquad_"
@@ -446,6 +451,11 @@ func (t *TmuxSession) Close() error {
 // SetDetachedSize set the width and height of the session while detached. This makes the
 // tmux output conform to the specified shape.
 func (t *TmuxSession) SetDetachedSize(width, height int) error {
+	if width == t.lastCols && height == t.lastRows {
+		return nil
+	}
+	t.lastCols = width
+	t.lastRows = height
 	return t.resizeViaTmux(width, height)
 }
 
@@ -461,6 +471,12 @@ func (t *TmuxSession) resizeViaTmux(cols, rows int) error {
 // both the tmux window (to undo any forced size from SetDetachedSize) and the
 // PTY. Otherwise falls back to tmux CLI only.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
+	if cols == t.lastCols && rows == t.lastRows {
+		return nil
+	}
+	t.lastCols = cols
+	t.lastRows = rows
+
 	if t.ptmx != nil {
 		// Resize the tmux window first to undo any forced size from SetDetachedSize.
 		_ = t.resizeViaTmux(cols, rows)
