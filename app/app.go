@@ -79,6 +79,10 @@ type home struct {
 
 	// promptAfterName tracks if we should enter prompt mode after naming
 	promptAfterName bool
+	// editingInstance holds a direct reference to the instance being named in
+	// stateNew. This prevents background messages (metadataUpdateDoneMsg) from
+	// changing which instance receives SetTitle() calls via list re-filtering.
+	editingInstance *session.Instance
 
 	// keySent is used to manage underlining menu items
 	keySent bool
@@ -450,7 +454,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNew {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -466,11 +470,6 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		return nil, false
 	}
 
-	// Skip the menu highlighting if the key is not in the map or we are using the shift up and down keys.
-	// TODO: cleanup: when you press enter on stateNew, we use keys.KeySubmitName. We should unify the keymap.
-	if name == keys.KeyEnter && m.state == stateNew {
-		name = keys.KeySubmitName
-	}
 	m.keySent = true
 	return tea.Batch(
 		func() tea.Msg { return msg },
@@ -492,6 +491,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.state = stateDefault
 			m.promptAfterName = false
+			m.editingInstance = nil
 			m.list.Kill()
 			return m, tea.Sequence(
 				tea.WindowSize(),
@@ -502,7 +502,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			)
 		}
 
-		instance := m.list.GetSelectedInstance()
+		// Use the stable editingInstance pointer rather than re-deriving from
+		// the list. Background messages (metadataUpdateDoneMsg) can re-filter
+		// the list and change what GetSelectedInstance() returns.
+		instance := m.editingInstance
 		switch msg.Type {
 		// Start the instance (enable previews etc) and go back to the main menu state.
 		case tea.KeyEnter:
@@ -525,6 +528,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			instance.SetStatus(session.Loading)
 			m.newInstanceFinalizer()
 			m.promptAfterName = false
+			m.editingInstance = nil
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 
@@ -561,6 +565,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		case tea.KeyEsc:
 			m.list.Kill()
 			m.state = stateDefault
+			m.editingInstance = nil
 			m.instanceChanged()
 
 			return m, tea.Sequence(
@@ -731,6 +736,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		m.newInstanceFinalizer = m.list.AddInstance(instance)
 		m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+		m.editingInstance = instance
 		m.state = stateNew
 		m.menu.SetState(ui.StateNewInstance)
 		m.promptAfterName = true
@@ -752,6 +758,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		m.newInstanceFinalizer = m.list.AddInstance(instance)
 		m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+		m.editingInstance = instance
 		m.state = stateNew
 		m.menu.SetState(ui.StateNewInstance)
 

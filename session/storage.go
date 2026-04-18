@@ -2,6 +2,7 @@ package session
 
 import (
 	"claude-squad/config"
+	"claude-squad/log"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -93,13 +94,14 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
 	}
 
-	instances := make([]*Instance, len(instancesData))
-	for i, data := range instancesData {
+	instances := make([]*Instance, 0, len(instancesData))
+	for _, data := range instancesData {
 		instance, err := FromInstanceData(data)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create instance %s: %w", data.Title, err)
+			log.WarningLog.Printf("skipping instance %s: %v", data.Title, err)
+			continue
 		}
-		instances[i] = instance
+		instances = append(instances, instance)
 	}
 
 	return instances, nil

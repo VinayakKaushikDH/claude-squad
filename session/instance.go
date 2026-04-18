@@ -314,10 +314,14 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}()
 
 	if !firstTimeSetup {
-		// Reuse existing session
+		// Reuse existing session. If the tmux session is gone (e.g. tmux server
+		// restarted), mark the instance as Paused so the user can resume it
+		// later rather than losing it entirely.
 		if err := tmuxSession.Restore(); err != nil {
-			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
-			return setupErr
+			log.WarningLog.Printf("could not restore session %s: %v — marking as paused", i.Title, err)
+			i.Status = Paused
+			i.started = true
+			return nil
 		}
 	} else {
 		// Setup git worktree first

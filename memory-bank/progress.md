@@ -45,7 +45,7 @@ Remaining polish:
 | Version | Change |
 |---------|--------|
 | 1.0.17  | Phase 4: multi-workspace tabs (`[`/`]`), filtered list, OS notifications, green Ready highlight; bug fixes for notification spam + workspace path |
-| 1.0.17  | jj checkout integration tests: 6 real-jj-repo tests in workspace_test.go; 4 unit tests in instance_test.go |
+| 1.0.17  | jj checkout tests: 6 integration tests (real jj repos) + 4 unit tests; mock `checkoutErr` made configurable |
 | 1.0.17  | jj checkout: `c` key checks out bookmark via `jj edit` without pausing agent; git unchanged |
 | 1.0.17  | jj Migration Phase 2: JJWorkspace implementation + full wiring |
 | 1.0.17  | jj Migration Phase 1: vcs.Workspace interface + GitWorktree refactor |
