@@ -111,6 +111,14 @@ func (j *JJWorkspace) setupFromExistingBookmark() error {
 func (j *JJWorkspace) Cleanup() error {
 	var errs []error
 
+	// Capture the working-copy change ID before forgetting the workspace so we
+	// can abandon it afterward. Without this, killed sessions leave an orphaned
+	// commit visible in jj log as "<hash>@<workspaceName>".
+	wcChangeID := ""
+	if out, err := runJJCommand(j.repoPath, "log", "-r", j.workspaceName+"@", "--no-graph", "-T", "change_id", "--ignore-working-copy"); err == nil {
+		wcChangeID = strings.TrimSpace(out)
+	}
+
 	// Forget the workspace
 	if _, err := runJJCommandWithRetry(j.repoPath, "workspace", "forget", j.workspaceName, "--ignore-working-copy"); err != nil {
 		// Only error if workspace actually exists
@@ -133,6 +141,13 @@ func (j *JJWorkspace) Cleanup() error {
 				errs = append(errs, fmt.Errorf("failed to delete bookmark %s: %w", j.bookmarkName, err))
 			}
 		}
+	}
+
+	// Abandon the orphaned working-copy commit. This removes the stale
+	// "<hash>@<workspaceName>" entry from jj log. Best-effort: ignore errors
+	// (e.g. commit has remote bookmarks or children from other workspaces).
+	if wcChangeID != "" {
+		_, _ = runJJCommandWithRetry(j.repoPath, "abandon", wcChangeID, "--ignore-working-copy")
 	}
 
 	if len(errs) > 0 {
