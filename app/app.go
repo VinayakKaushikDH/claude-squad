@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +119,14 @@ type home struct {
 	activeWorkspace int
 	workspaceTabBar *ui.WorkspaceTabBar // nil when <=1 workspace
 	currentRepoPath string
+
+	// -- Cross-process coordination --
+
+	// reloadTickCounter counts metadata ticks; triggers disk reload every 10 ticks (~5s).
+	reloadTickCounter int
+	// locallyDeleted tracks instance IDs deleted in this process so they aren't
+	// re-added on the next disk reload.
+	locallyDeleted map[string]bool
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -131,17 +140,18 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	}
 
 	h := &home{
-		ctx:          ctx,
-		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		menu:         ui.NewMenu(),
-		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		errBox:       ui.NewErrBox(),
-		storage:      storage,
-		appConfig:    appConfig,
-		program:      program,
-		autoYes:      autoYes,
-		state:        stateDefault,
-		appState:     appState,
+		ctx:            ctx,
+		spinner:        spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		menu:           ui.NewMenu(),
+		tabbedWindow:   ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		errBox:         ui.NewErrBox(),
+		storage:        storage,
+		appConfig:      appConfig,
+		program:        program,
+		autoYes:        autoYes,
+		state:          stateDefault,
+		appState:       appState,
+		locallyDeleted: make(map[string]bool),
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
@@ -159,21 +169,22 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		}
 	}
 
-	h.refreshWorkspaces()
-
 	if cwd, err := os.Getwd(); err == nil {
 		h.currentRepoPath, _ = filepath.Abs(cwd)
 	}
+
+	h.refreshWorkspaces()
+
 	if len(h.workspaces) > 0 {
 		h.activeWorkspace = FindWorkspaceIndex(h.workspaces, h.currentRepoPath)
 		h.list.SetFilter(h.workspaces[h.activeWorkspace].Path)
 	}
 
-	if len(h.workspaces) >= 2 {
+	if len(h.workspaces) >= 1 {
 		h.workspaceTabBar = ui.NewWorkspaceTabBar()
 		h.workspaceTabBar.SetWorkspaces(h.workspaceTabs())
 		h.workspaceTabBar.SetActiveIdx(h.activeWorkspace)
-		h.menu.SetHasMultipleWorkspaces(true)
+		h.menu.SetHasMultipleWorkspaces(len(h.workspaces) >= 2)
 	}
 
 	return h
@@ -181,6 +192,28 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 
 func (m *home) refreshWorkspaces() {
 	m.workspaces = DeriveWorkspaces(m.list.GetInstances())
+	// Ensure the current working directory always has a workspace entry,
+	// even when no instances exist for it yet. This prevents a second cs
+	// process from defaulting to showing another process's workspace.
+	if m.currentRepoPath != "" {
+		found := false
+		for _, ws := range m.workspaces {
+			if ws.Path == m.currentRepoPath {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.workspaces = append(m.workspaces, Workspace{
+				Name: filepath.Base(m.currentRepoPath),
+				Path: m.currentRepoPath,
+			})
+			// Re-sort to maintain alphabetical order.
+			sort.Slice(m.workspaces, func(i, j int) bool {
+				return m.workspaces[i].Name < m.workspaces[j].Name
+			})
+		}
+	}
 }
 
 func (m *home) workspaceTabs() []ui.WorkspaceTab {
@@ -195,7 +228,7 @@ func (m *home) workspaceTabs() []ui.WorkspaceTab {
 func (m *home) syncWorkspaceUI() {
 	m.refreshWorkspaces()
 
-	if len(m.workspaces) >= 2 {
+	if len(m.workspaces) >= 1 {
 		if m.workspaceTabBar == nil {
 			m.workspaceTabBar = ui.NewWorkspaceTabBar()
 		}
@@ -204,17 +237,127 @@ func (m *home) syncWorkspaceUI() {
 		}
 		m.workspaceTabBar.SetWorkspaces(m.workspaceTabs())
 		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
-		m.menu.SetHasMultipleWorkspaces(true)
+		m.menu.SetHasMultipleWorkspaces(len(m.workspaces) >= 2)
 	} else {
 		m.workspaceTabBar = nil
 		m.activeWorkspace = 0
 		m.menu.SetHasMultipleWorkspaces(false)
-		if len(m.workspaces) == 1 {
-			m.list.SetFilter(m.workspaces[0].Path)
-		} else {
-			m.list.SetFilter("")
+		m.list.SetFilter("")
+	}
+}
+
+// mergeReloadedInstances reconciles in-memory instances with freshly loaded disk data.
+// Rules:
+//  1. On disk + not in memory + not locallyDeleted → add
+//  2. On disk + not in memory + locallyDeleted → skip
+//  3. In memory + not on disk + Started() + not editingInstance → remove (no Kill)
+//  4. In memory + not on disk + !Started() → keep (still being created)
+//  5. Both exist → update metadata only (status, diff stats)
+func (m *home) mergeReloadedInstances(diskData []session.InstanceData) {
+	// Build lookup of disk instances by ID (primary) and title (fallback).
+	diskByID := make(map[string]*session.InstanceData, len(diskData))
+	diskByTitle := make(map[string]*session.InstanceData, len(diskData))
+	for i := range diskData {
+		d := &diskData[i]
+		if d.ID != "" {
+			diskByID[d.ID] = d
+		}
+		diskByTitle[d.Title] = d
+	}
+
+	// Build lookup of in-memory instances by ID and title.
+	memInstances := m.list.GetInstances()
+	memByID := make(map[string]*session.Instance, len(memInstances))
+	memByTitle := make(map[string]*session.Instance, len(memInstances))
+	for _, inst := range memInstances {
+		if inst.ID != "" {
+			memByID[inst.ID] = inst
+		}
+		memByTitle[inst.Title] = inst
+	}
+
+	// Rule 1 & 2: find disk instances not in memory.
+	for i := range diskData {
+		d := &diskData[i]
+		found := false
+		if d.ID != "" {
+			_, found = memByID[d.ID]
+		}
+		if !found {
+			_, found = memByTitle[d.Title]
+		}
+		if found {
+			continue
+		}
+		// Rule 2: skip if locally deleted.
+		if d.ID != "" && m.locallyDeleted[d.ID] {
+			continue
+		}
+		if d.ID == "" && d.Title != "" && m.locallyDeleted["title:"+d.Title] {
+			continue
+		}
+		// Rule 1: add new instance from disk.
+		inst, err := session.FromInstanceData(*d)
+		if err != nil {
+			log.WarningLog.Printf("disk reload: skipping instance %s: %v", d.Title, err)
+			continue
+		}
+		if m.autoYes {
+			inst.AutoYes = true
+		}
+		m.list.AddInstance(inst)() // call finalizer immediately
+	}
+
+	// Rule 3 & 4: find in-memory instances not on disk.
+	var toRemove []string
+	for _, inst := range memInstances {
+		found := false
+		if inst.ID != "" {
+			_, found = diskByID[inst.ID]
+		}
+		if !found {
+			_, found = diskByTitle[inst.Title]
+		}
+		if found {
+			continue
+		}
+		// Rule 4: keep instances still being created.
+		if !inst.Started() {
+			continue
+		}
+		// Rule 3: skip the instance currently being edited.
+		if m.editingInstance != nil && inst == m.editingInstance {
+			continue
+		}
+		toRemove = append(toRemove, inst.Title)
+	}
+	for _, title := range toRemove {
+		m.list.RemoveInstanceByTitle(title)
+	}
+
+	// Rule 5: update metadata for instances that exist in both.
+	for _, inst := range m.list.GetInstances() {
+		var diskInst *session.InstanceData
+		if inst.ID != "" {
+			diskInst = diskByID[inst.ID]
+		}
+		if diskInst == nil {
+			diskInst = diskByTitle[inst.Title]
+		}
+		if diskInst == nil {
+			continue
+		}
+		// Update diff stats from disk if available.
+		if diskInst.DiffStats.Added != 0 || diskInst.DiffStats.Removed != 0 {
+			inst.SetDiffStats(&vcs.DiffStats{
+				Added:   diskInst.DiffStats.Added,
+				Removed: diskInst.DiffStats.Removed,
+				Content: diskInst.DiffStats.Content,
+			})
 		}
 	}
+
+	m.syncWorkspaceUI()
 }
 
 // updateHandleWindowSizeEvent sets the sizes of the components.
@@ -314,13 +457,20 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevStatus := r.instance.Status
 			if r.updated {
 				r.instance.SetStatus(session.Running)
+				r.instance.ReadyAcknowledged = false
 			} else if r.hasPrompt {
 				r.instance.TapEnter()
 				r.instance.NotifiedReady = false
 			} else {
 				r.instance.SetStatus(session.Ready)
-				// Fire notification on Running -> Ready transition.
-				if prevStatus == session.Running && !r.instance.NotifiedReady && m.appConfig.GetNotifications() {
+				// Check if user is currently viewing this instance's workspace.
+				isViewingWorkspace := m.activeWorkspace < len(m.workspaces) &&
+					m.workspaces[m.activeWorkspace].Path == r.instance.Path
+				if isViewingWorkspace {
+					r.instance.ReadyAcknowledged = true
+				}
+				// Fire notification on Running -> Ready transition (only if not viewing).
+				if prevStatus == session.Running && !r.instance.NotifiedReady && !isViewingWorkspace && m.appConfig.GetNotifications() {
 					r.instance.NotifiedReady = true
 					title := "Claude Squad"
 					for _, ws := range m.workspaces {
@@ -349,8 +499,27 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh workspace HasReady flags and tab bar.
 		m.syncWorkspaceUI()
+
+		// Trigger periodic disk reload every 10 ticks (~5 seconds).
+		m.reloadTickCounter++
+		if m.reloadTickCounter >= 10 {
+			m.reloadTickCounter = 0
+			storage := m.storage
+			notifyCmds = append(notifyCmds, func() tea.Msg {
+				data, err := storage.ReloadAndParse()
+				return diskReloadDoneMsg{instances: data, err: err}
+			})
+		}
+
 		cmds := append(notifyCmds, tickUpdateMetadataCmd(m.snapshotActiveInstances()))
 		return m, tea.Batch(cmds...)
+	case diskReloadDoneMsg:
+		if msg.err != nil {
+			log.WarningLog.Printf("disk reload failed: %v", msg.err)
+			return m, nil
+		}
+		m.mergeReloadedInstances(msg.instances)
+		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case tea.MouseMsg:
 		// Handle mouse wheel events for scrolling the diff/preview pane
 		if msg.Action == tea.MouseActionPress {
@@ -435,6 +604,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		m.list.IncrementBlinkFrame()
 		return m, cmd
 	}
 	return m, nil
@@ -765,9 +935,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case keys.KeyUp:
 		m.list.Up()
+		m.acknowledgeSelectedReady()
 		return m, m.instanceChanged()
 	case keys.KeyDown:
 		m.list.Down()
+		m.acknowledgeSelectedReady()
 		return m, m.instanceChanged()
 	case keys.KeyShiftUp:
 		m.tabbedWindow.ScrollUp()
@@ -789,6 +961,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		killAction := func() tea.Msg {
 			if err := selected.CanKill(); err != nil {
 				return err
+			}
+
+			// Track locally deleted instance so disk reload doesn't re-add it.
+			if selected.ID != "" {
+				m.locallyDeleted[selected.ID] = true
+			} else if selected.Title != "" {
+				m.locallyDeleted["title:"+selected.Title] = true
 			}
 
 			// Clean up terminal session for this instance
@@ -860,6 +1039,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
 		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+		m.acknowledgeVisibleReady()
 		return m, m.instanceChanged()
 	case keys.KeyNextWorkspace:
 		if len(m.workspaces) < 2 {
@@ -871,6 +1051,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		m.list.SetFilter(m.workspaces[m.activeWorkspace].Path)
 		m.workspaceTabBar.SetActiveIdx(m.activeWorkspace)
+		m.acknowledgeVisibleReady()
 		return m, m.instanceChanged()
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
@@ -880,6 +1061,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if err := selected.Resume(); err != nil {
 			return m, m.handleError(err)
 		}
+		selected.ReadyAcknowledged = false
 		return m, tea.WindowSize()
 	case keys.KeyEnter:
 		if m.list.NumInstances() == 0 {
@@ -898,7 +1080,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					return
 				}
 				<-ch
+				selected.ReadyAcknowledged = true
 				m.state = stateDefault
+				m.syncWorkspaceUI()
 			})
 			return m, nil
 		}
@@ -910,7 +1094,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return
 			}
 			<-ch
+			selected.ReadyAcknowledged = true
 			m.state = stateDefault
+			m.syncWorkspaceUI()
 			m.instanceChanged()
 		})
 		return m, nil
@@ -938,6 +1124,24 @@ func (m *home) instanceChanged() tea.Cmd {
 		return m.handleError(err)
 	}
 	return nil
+}
+
+// acknowledgeVisibleReady marks all Ready instances in the current workspace as acknowledged.
+func (m *home) acknowledgeVisibleReady() {
+	for _, inst := range m.list.GetVisibleInstances() {
+		if inst.Status == session.Ready {
+			inst.ReadyAcknowledged = true
+		}
+	}
+	m.syncWorkspaceUI()
+}
+
+// acknowledgeSelectedReady marks the currently selected instance as acknowledged if Ready.
+func (m *home) acknowledgeSelectedReady() {
+	if selected := m.list.GetSelectedInstance(); selected != nil && selected.Status == session.Ready {
+		selected.ReadyAcknowledged = true
+		m.syncWorkspaceUI()
+	}
 }
 
 type keyupMsg struct{}
@@ -1024,6 +1228,12 @@ type instanceMetaResult struct {
 // metadataUpdateDoneMsg is sent when the background metadata update completes.
 type metadataUpdateDoneMsg struct {
 	results []instanceMetaResult
+}
+
+// diskReloadDoneMsg is sent when the periodic disk reload completes.
+type diskReloadDoneMsg struct {
+	instances []session.InstanceData
+	err       error
 }
 
 // instanceStartDoneMsg is sent when the background instance start completes.

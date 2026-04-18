@@ -158,6 +158,21 @@ func (s *Storage) UpdateInstance(instance *Instance) error {
 	return s.SaveInstances(instances)
 }
 
+// ReloadAndParse re-reads instances from disk and returns their raw data
+// without constructing full Instance objects. Used for cross-process merge.
+func (s *Storage) ReloadAndParse() ([]InstanceData, error) {
+	jsonData, err := s.state.ReloadInstances()
+	if err != nil {
+		return nil, fmt.Errorf("failed to reload instances: %w", err)
+	}
+
+	var data []InstanceData
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
+	}
+	return data, nil
+}
+
 // DeleteAllInstances removes all stored instances
 func (s *Storage) DeleteAllInstances() error {
 	return s.state.DeleteAllInstances()

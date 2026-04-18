@@ -18,6 +18,9 @@ const pausedIcon = "⏸ "
 var readyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
 
+var dimReadyStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#2d6b3f", Dark: "#2d6b3f"})
+
 var addedLinesStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
 
@@ -69,6 +72,9 @@ type List struct {
 	// map of repo name to number of instances using it. Used to display the repo name only if there are
 	// multiple repos in play.
 	repos map[string]int
+
+	// blinkFrame increments on each spinner tick; used to pulse Ready icons at ~1 Hz.
+	blinkFrame int
 }
 
 func NewList(spinner *spinner.Model, autoYes bool) *List {
@@ -79,6 +85,17 @@ func NewList(spinner *spinner.Model, autoYes bool) *List {
 		selectionMemo: make(map[string]int),
 		autoyes:       autoYes,
 	}
+}
+
+// IncrementBlinkFrame advances the blink frame counter (called on each spinner tick).
+func (l *List) IncrementBlinkFrame() {
+	l.blinkFrame++
+}
+
+// blinkOn returns whether the Ready icon should be in its bright phase.
+// Toggles every 6 spinner frames (~500ms at 12 FPS) for a ~1 Hz pulse.
+func (l *List) blinkOn() bool {
+	return (l.blinkFrame/6)%2 == 0
 }
 
 // SetSize sets the height and width of the list.
@@ -169,7 +186,7 @@ func (r *InstanceRenderer) setWidth(width int) {
 // ɹ and ɻ are other options.
 const branchIcon = "Ꮧ"
 
-func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, hasMultipleRepos bool) string {
+func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, hasMultipleRepos bool, blinkOn bool) string {
 	prefix := fmt.Sprintf(" %d. ", idx)
 	if idx >= 10 {
 		prefix = prefix[:len(prefix)-1]
@@ -187,7 +204,11 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	case session.Running, session.Loading:
 		join = fmt.Sprintf("%s ", r.spinner.View())
 	case session.Ready:
-		join = readyStyle.Render(readyIcon)
+		if blinkOn {
+			join = readyStyle.Render(readyIcon)
+		} else {
+			join = dimReadyStyle.Render(readyIcon)
+		}
 	case session.Paused:
 		join = pausedStyle.Render(pausedIcon)
 	default:
@@ -308,9 +329,10 @@ func (l *List) String() string {
 	b.WriteString("\n")
 
 	// Render only visible (filtered) instances.
+	blink := l.blinkOn()
 	for visIdx, actualIdx := range l.filteredIdxs {
 		item := l.items[actualIdx]
-		b.WriteString(l.renderer.Render(item, visIdx+1, visIdx == l.selectedIdx, len(l.repos) > 1))
+		b.WriteString(l.renderer.Render(item, visIdx+1, visIdx == l.selectedIdx, len(l.repos) > 1, blink))
 		if visIdx != len(l.filteredIdxs)-1 {
 			b.WriteString("\n\n")
 		}

@@ -76,6 +76,10 @@ type Instance struct {
 	// NotifiedReady prevents duplicate notifications per Ready transition.
 	NotifiedReady bool
 
+	// ReadyAcknowledged tracks whether the user has "seen" this instance's Ready
+	// state by switching to its workspace or selecting it. Runtime-only, not persisted.
+	ReadyAcknowledged bool
+
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
 	selectedBranch string
 
@@ -250,6 +254,9 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 func (i *Instance) RepoName() (string, error) {
 	if !i.started {
 		return "", fmt.Errorf("cannot get repo name for instance that has not been started")
+	}
+	if i.workspace == nil {
+		return "", fmt.Errorf("workspace not initialized")
 	}
 	return i.workspace.GetRepoName(), nil
 }
@@ -485,6 +492,11 @@ func (i *Instance) GetWorktreePath() string {
 
 func (i *Instance) Started() bool {
 	return i.started
+}
+
+// SetStartedForTest allows tests to mark an instance as started without real tmux.
+func (i *Instance) SetStartedForTest() {
+	i.started = true
 }
 
 // SetTitle sets the title of the instance. Returns an error if the instance has started.

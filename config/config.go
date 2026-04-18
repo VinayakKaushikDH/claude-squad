@@ -17,13 +17,18 @@ const (
 	defaultProgram = "claude"
 )
 
-// GetConfigDir returns the path to the application's configuration directory
-func GetConfigDir() (string, error) {
+// getConfigDir is the internal implementation, overridable in tests.
+var getConfigDir = func() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get config home directory: %w", err)
 	}
 	return filepath.Join(homeDir, ".claude-squad"), nil
+}
+
+// GetConfigDir returns the path to the application's configuration directory
+func GetConfigDir() (string, error) {
+	return getConfigDir()
 }
 
 // Profile represents a named program configuration

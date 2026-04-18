@@ -37,7 +37,7 @@ func DeriveWorkspaces(instances []*session.Instance) []Workspace {
 			seen[p] = &entry{path: p}
 			paths = append(paths, p)
 		}
-		if inst.Status == session.Ready {
+		if inst.Status == session.Ready && !inst.ReadyAcknowledged {
 			seen[p].hasReady = true
 		}
 	}
